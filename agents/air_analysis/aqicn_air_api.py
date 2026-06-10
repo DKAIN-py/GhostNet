@@ -3,7 +3,7 @@ import httpx
 
 # Module Imports
 from utils import log
-from config import WAQI_API
+from agents.air_analysis.config import WAQI_API
 
 async def fetch_waqi_delhi_pm25(client: httpx.AsyncClient) -> tuple[float | None, str]:
 

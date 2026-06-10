@@ -5,11 +5,10 @@ import asyncio
 import httpx
 
 # Module imports
-from utils import log
-from utils import calculate_health_score
 from gov_air_api import fetch_delhi_pm25
+from utils import log, calculate_health_score
 from aqicn_air_api import fetch_waqi_delhi_pm25
-from config import (NODE_BACKEND_URL, POLL_INTERVAL_SECONDS)
+from agents.air_analysis.config import (NODE_BACKEND_URL, POLL_INTERVAL_SECONDS)
 
 
 def build_signal_payload(
@@ -97,21 +96,21 @@ async def air_quality_agent_loop() -> None:
 
 
 
-app = FastAPI(
+air_app = FastAPI(
     title      = "AutoNet — Air Quality Agent",
     description= "Autonomous PM2.5 monitoring microservice for Delhi. Part of the AutoNet AQI pipeline.",
     version    = "1.0.0",
 )
 
 
-@app.on_event("startup")
+@air_app.on_event("startup")
 async def startup_event() -> None:
     log.info("AutoNet Air Quality Agent starting up...")
     asyncio.create_task(air_quality_agent_loop())
     log.info("Background agent loop scheduled via asyncio.create_task().")
 
 
-@app.get(
+@air_app.get(
     "/status",
     summary    = "Agent health check",
     tags       = ["Health"],
@@ -124,7 +123,7 @@ async def status() -> dict:
     }
 
 
-@app.get(
+@air_app.get(
     "/score-preview",
     summary = "Dry-run the normalization engine",
     tags    = ["Debug"],

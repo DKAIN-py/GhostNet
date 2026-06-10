@@ -1,11 +1,8 @@
-import os
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 1 — CORE CONFIGURATION CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 # Source: India Open Government Data platform — CPCB real-time AQI feed
 OGD_API_URL: str = os.getenv("OGD_API_URL")
@@ -31,7 +28,9 @@ OGD_QUERY_PARAMS: dict = {
     "limit"          : 300,
 }
 
+# World AQI Project
 WAQI_API_URL = os.getenv("WAQI_API_URL")
 WAQI_API_TOKEN = os.getenv("WAQI_API_TOKEN")
 
 WAQI_API: str = f"{WAQI_API_URL}{WAQI_API_TOKEN}"
+
