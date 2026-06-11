@@ -54,7 +54,12 @@ export function GhostnetProvider({ children }) {
     dispatch({ type: 'SET_CONNECTED', payload: connected });
   }
 
-  function fireFakeCascade() { dispatch({ type: 'CASCADE_FIRED',   payload: MOCK_CASCADE }); }
+  function fireFakeCascade() {
+    dispatch({
+      type: 'CASCADE_FIRED',
+      payload: { ...MOCK_CASCADE, timestamp: new Date().toISOString() },
+    });
+  }
   function clearCascade()    { dispatch({ type: 'CASCADE_CLEARED'                        }); }
   function pushMockSignal(s) { dispatch({ type: 'SIGNAL_RECEIVED', payload: s            }); }
 
