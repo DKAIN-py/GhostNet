@@ -100,7 +100,60 @@ function clearCascade() {
   return cleared;
 }
 
+// ─── Replay Helpers ───
+
+/**
+ * Seed store.replayData with mock historical signals for dev/demo.
+ * Each date gets signals from all 3 agent domains at varying health levels.
+ * Called once at server startup.
+ */
+function seedReplayData() {
+  store.replayData['2026-06-10'] = [
+    { agentId: 'air_quality', domain: 'air-quality', healthScore: 82, anomalyLevel: 'good', signal: 'AQI stable at 78 across Delhi NCR', timestamp: '2026-06-10T06:00:00Z' },
+    { agentId: 'transport', domain: 'transport', healthScore: 75, anomalyLevel: 'good', signal: 'Metro services running on schedule', timestamp: '2026-06-10T06:15:00Z' },
+    { agentId: 'sentiment', domain: 'sentiment', healthScore: 88, anomalyLevel: 'good', signal: 'Public sentiment neutral — no trending alerts', timestamp: '2026-06-10T06:30:00Z' },
+    { agentId: 'air_quality', domain: 'air-quality', healthScore: 61, anomalyLevel: 'moderate', signal: 'PM2.5 rising in Anand Vihar — 142 µg/m³', timestamp: '2026-06-10T09:00:00Z' },
+    { agentId: 'transport', domain: 'transport', healthScore: 52, anomalyLevel: 'moderate', signal: 'Congestion building on NH-24 corridor', timestamp: '2026-06-10T09:30:00Z' },
+    { agentId: 'air_quality', domain: 'air-quality', healthScore: 28, anomalyLevel: 'critical', signal: 'AQI spike to 389 in South Delhi — stubble burning detected', timestamp: '2026-06-10T12:00:00Z' },
+    { agentId: 'sentiment', domain: 'sentiment', healthScore: 35, anomalyLevel: 'critical', signal: 'Negative sentiment surge — #DelhiSmog trending', timestamp: '2026-06-10T12:15:00Z' },
+    { agentId: 'transport', domain: 'transport', healthScore: 41, anomalyLevel: 'critical', signal: 'Visibility below 200m — flight delays at IGI', timestamp: '2026-06-10T13:00:00Z' },
+    { agentId: 'air_quality', domain: 'air-quality', healthScore: 55, anomalyLevel: 'moderate', signal: 'AQI recovering to 198 — wind shift detected', timestamp: '2026-06-10T16:00:00Z' },
+    { agentId: 'sentiment', domain: 'sentiment', healthScore: 72, anomalyLevel: 'good', signal: 'Sentiment stabilizing — relief tweets increasing', timestamp: '2026-06-10T18:00:00Z' },
+  ];
+
+  store.replayData['2026-06-11'] = [
+    { agentId: 'air_quality', domain: 'air-quality', healthScore: 90, anomalyLevel: 'good', signal: 'Morning AQI at 52 — excellent air quality', timestamp: '2026-06-11T05:00:00Z' },
+    { agentId: 'transport', domain: 'transport', healthScore: 85, anomalyLevel: 'good', signal: 'All metro lines operational — normal load', timestamp: '2026-06-11T06:00:00Z' },
+    { agentId: 'sentiment', domain: 'sentiment', healthScore: 91, anomalyLevel: 'good', signal: 'Positive sentiment dominant — morning calm', timestamp: '2026-06-11T06:30:00Z' },
+    { agentId: 'transport', domain: 'transport', healthScore: 38, anomalyLevel: 'critical', signal: 'Blue Line signal failure — 45 min delays', timestamp: '2026-06-11T08:30:00Z' },
+    { agentId: 'sentiment', domain: 'sentiment', healthScore: 29, anomalyLevel: 'critical', signal: 'Commuter rage spiking — #MetroFail trending', timestamp: '2026-06-11T09:00:00Z' },
+    { agentId: 'air_quality', domain: 'air-quality', healthScore: 73, anomalyLevel: 'moderate', signal: 'PM10 rising near construction zones in Dwarka', timestamp: '2026-06-11T10:00:00Z' },
+    { agentId: 'transport', domain: 'transport', healthScore: 65, anomalyLevel: 'moderate', signal: 'Blue Line partially restored — residual delays', timestamp: '2026-06-11T11:00:00Z' },
+    { agentId: 'sentiment', domain: 'sentiment', healthScore: 60, anomalyLevel: 'moderate', signal: 'Sentiment recovering — frustration subsiding', timestamp: '2026-06-11T12:00:00Z' },
+  ];
+
+  console.log('[SEED] Replay data loaded:', Object.keys(store.replayData).join(', '));
+}
+
+/**
+ * Return sorted array of all available replay date strings.
+ */
+function getReplayDates() {
+  return Object.keys(store.replayData).sort();
+}
+
+/**
+ * Return the signal array for a given date, sorted by timestamp ascending.
+ * Returns null if the date has no data.
+ */
+function getReplaySignals(date) {
+  const signals = store.replayData[date];
+  if (!signals) return null;
+  return [...signals].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
 module.exports = {
   store, addSignal, getLast24hSignals, isSignalStale,
   setCascade, clearCascade, isCascadeCooldownActive,
+  seedReplayData, getReplayDates, getReplaySignals,
 };

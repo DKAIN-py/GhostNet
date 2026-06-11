@@ -30,4 +30,14 @@ function emitCascadeClear() {
   }
 }
 
-module.exports = { initEmitter, emitSignal, emitCascade, emitCascadeClear };
+function emitReplayComplete(date, opts = {}) {
+  if (io) {
+    const payload = { date, completedAt: new Date().toISOString() };
+    if (opts.aborted) payload.aborted = true;
+    io.emit('replay-complete', payload);
+    console.log('[SOCKET] Broadcasting to', io.engine.clientsCount, 'clients');
+    console.log('[EMIT] replay-complete for date:', date, opts.aborted ? '(aborted)' : '');
+  }
+}
+
+module.exports = { initEmitter, emitSignal, emitCascade, emitCascadeClear, emitReplayComplete };

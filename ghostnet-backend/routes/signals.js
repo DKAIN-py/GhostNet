@@ -13,7 +13,7 @@ const REQUIRED_FIELDS = [
   'signal',
 ];
 
-const VALID_ANOMALY_LEVELS = ['good', 'moderate', 'critical'];
+const VALID_ANOMALY_LEVELS = ['good', 'moderate', 'critical', 'warning', 'nominal'];
 
 /**
  * POST /agent-signal

@@ -26,6 +26,9 @@ io.on('connection', (socket) => {
   });
 });
 
+const { seedReplayData } = require('./store/memory');
+seedReplayData();
+
 server.listen(PORT, () => {
   console.log(`GHOSTNET backend live on port ${PORT}`);
 });
