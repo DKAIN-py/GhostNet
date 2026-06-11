@@ -5,3 +5,7 @@
 __pycache__
 
 .vscode
+
+*.db
+*.db-shm
+*.db-wal
