@@ -2,9 +2,9 @@
 import httpx
 
 ## Module imports
-from utils import log
-from agents.air_analysis.config import (OGD_API_URL,PRIMARY_STATION, 
-                                        BACKUP_STATION, OGD_QUERY_PARAMS)
+from .utils import log
+from .config import (OGD_API_URL,PRIMARY_STATION, 
+                    BACKUP_STATION, OGD_QUERY_PARAMS)
 
 def _parse_pm25_from_records(records: list[dict], station_name: str) -> float | None:
     for record in records:

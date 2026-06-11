@@ -1,16 +1,18 @@
+# Package imports
+from transformers import pipeline as hf_pipeline
+from Scweet import Scweet
 import logging
 import random
-from Scweet import Scweet
-from transformers import pipeline as hf_pipeline
 
-from config import (TWITTER_AUTH_TOKEN, MAX_TWEETS_PER_CYCLE, HAZARD_KEYWORDS)
+# Module imports
+from .config import (TWITTER_AUTH_TOKEN, MAX_TWEETS_PER_CYCLE, HAZARD_KEYWORDS)
 
 logging.basicConfig(
     level  = logging.INFO,
     format = "%(asctime)s  [%(levelname)s]  %(name)s — %(message)s",
     datefmt= "%Y-%m-%dT%H:%M:%S",
 )
-log = logging.getLogger("ghostnet.sentiment")
+log = logging.getLogger("autonet.sentiment")
 
 
 def load_roberta_pipeline():
@@ -23,8 +25,8 @@ def load_roberta_pipeline():
         task            = "sentiment-analysis",
         model           = model_id,
         tokenizer       = model_id,
-        top_k           = None,       # return ALL label scores, not just top-1
-        truncation      = True,       # hard-truncate at 514 tokens (RoBERTa limit)
+        top_k           = None,       
+        truncation      = True,       
         max_length      = 514,
     )
 
@@ -59,7 +61,7 @@ def evaluate_live_tweets(tweets: list, roberta: callable) -> tuple[int, str, str
     analyzed         = 0
     negative_scores  = []
     crisis_triggers  = 0
-    sample_texts     = []   # for the signal summary string
+    sample_texts     = []   
 
     for tweet in tweets[:MAX_TWEETS_PER_CYCLE]:
         text = tweet.get("text") or tweet.get("Tweet") or ""
@@ -81,8 +83,6 @@ def evaluate_live_tweets(tweets: list, roberta: callable) -> tuple[int, str, str
         negative_scores.append(neg_score)
         analyzed += 1
 
-        # ── Crisis trigger detection ─────────────────────────────────────────
-        # A trigger requires BOTH: model says negative AND hazard keyword present
         text_lower = text.lower()
         has_hazard_keyword = any(kw in text_lower for kw in HAZARD_KEYWORDS)
 
@@ -95,7 +95,6 @@ def evaluate_live_tweets(tweets: list, roberta: callable) -> tuple[int, str, str
 
         sample_texts.append(text[:60])
 
-    # ── Guard: no tweets successfully analyzed ───────────────────────────────
     if not negative_scores:
         return (88, "nominal", "Tweets scraped but inference yielded no results.")
 
@@ -105,11 +104,8 @@ def evaluate_live_tweets(tweets: list, roberta: callable) -> tuple[int, str, str
         "Sentiment batch → analyzed=%d | mean_negative=%.3f | triggers=%d",
         analyzed, mean_negative, crisis_triggers
     )
-
-    # ── Tier 3: CRITICAL CRISIS ──────────────────────────────────────────────
-    # High trigger count OR consistently high negative confidence
     if crisis_triggers >= 2 or mean_negative > 0.70:
-        health_score  = random.randint(15, 35)   # locked bound per contract
+        health_score  = random.randint(15, 35)   
         anomaly_level = "critical"
         signal = (
             f"CRISIS DETECTED — {crisis_triggers} environmental triggers in "
@@ -117,18 +113,16 @@ def evaluate_live_tweets(tweets: list, roberta: callable) -> tuple[int, str, str
             f"Sample: \"{sample_texts[0]}...\""
         )
 
-    # ── Tier 2: WARNING DEGRADATION ──────────────────────────────────────────
     elif crisis_triggers >= 1 or mean_negative > 0.40:
-        health_score  = random.randint(40, 65)   # sliding bound per contract
+        health_score  = random.randint(40, 65)  
         anomaly_level = "warning"
         signal = (
             f"Elevated negativity detected — {crisis_triggers} trigger(s) matched. "
             f"Mean negative confidence: {mean_negative:.2f} across {analyzed} tweets."
         )
 
-    # ── Tier 1: NOMINAL ──────────────────────────────────────────────────────
     else:
-        health_score  = random.randint(85, 95)   # stable baseline per contract
+        health_score  = random.randint(85, 95)   
         anomaly_level = "nominal"
         signal = (
             f"Sentiment baseline stable — mean negative confidence: {mean_negative:.2f} "

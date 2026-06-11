@@ -9,3 +9,8 @@ __pycache__
 *.db
 *.db-shm
 *.db-wal
+
+*.js
+
+node_modules/
+*.json

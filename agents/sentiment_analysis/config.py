@@ -3,10 +3,10 @@ import os
 
 load_dotenv()
 
-# Extract from your browser's x.com cookies → Application → Cookies → auth_token
+
 TWITTER_AUTH_TOKEN: str | None = os.getenv("TWITTER_AUTH_TOKEN")
 
-# GHOSTNET Node.js ingest endpoint
+# AutoNET Node.js ingest endpoint
 NODE_BACKEND_URL: str = os.getenv("NODE_BACKEND_URL")
 
 # Search query for live tweet ingestion

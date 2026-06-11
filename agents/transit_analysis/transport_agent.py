@@ -98,7 +98,7 @@ transport_app = FastAPI(
 
 
 @transport_app.on_event("startup")
-async def startup_event() -> None:
+async def startup_transit_event() -> None:
     log.info("GHOSTNET Transport Agent starting up...")
     asyncio.create_task(transport_agent_loop())
     log.info("Background agent loop scheduled.")

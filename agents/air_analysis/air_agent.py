@@ -5,10 +5,10 @@ import asyncio
 import httpx
 
 # Module imports
-from gov_air_api import fetch_delhi_pm25
-from utils import log, calculate_health_score
-from aqicn_air_api import fetch_waqi_delhi_pm25
-from agents.air_analysis.config import (NODE_BACKEND_URL, POLL_INTERVAL_SECONDS)
+from .gov_air_api import fetch_delhi_pm25
+from .utils import log, calculate_health_score
+from .aqicn_air_api import fetch_waqi_delhi_pm25
+from .config import (NODE_BACKEND_URL, POLL_INTERVAL_SECONDS)
 
 
 def build_signal_payload(
@@ -104,7 +104,7 @@ air_app = FastAPI(
 
 
 @air_app.on_event("startup")
-async def startup_event() -> None:
+async def startup_air_event() -> None:
     log.info("AutoNet Air Quality Agent starting up...")
     asyncio.create_task(air_quality_agent_loop())
     log.info("Background agent loop scheduled via asyncio.create_task().")
