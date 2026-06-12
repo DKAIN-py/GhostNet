@@ -3,6 +3,7 @@ from transformers import pipeline as hf_pipeline
 from Scweet import Scweet
 import logging
 import random
+import os
 
 # Module imports
 from .config import (TWITTER_AUTH_TOKEN, MAX_TWEETS_PER_CYCLE, HAZARD_KEYWORDS)
@@ -17,17 +18,24 @@ log = logging.getLogger("autonet.sentiment")
 
 def load_roberta_pipeline():
     
-    model_id = "cardiffnlp/twitter-roberta-base-sentiment-latest"
-    log.info("Loading RoBERTa sentiment model: %s", model_id)
+    local_path = r"/home/kain/work/Users/Divyanshu/projects/AutoNet/agents/local_roberta"
+
+    if not os.path.exists(local_path):
+        from transformers import pipeline
+        pipe = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment-latest")
+        pipe.save_pretrained("./local_roberta")
+        
+    log.info("Loading RoBERTa sentiment model: %s", local_path)
     log.info("First run will download ~500MB model weights. Subsequent runs use cache.")
 
     nlp = hf_pipeline(
         task            = "sentiment-analysis",
-        model           = model_id,
-        tokenizer       = model_id,
+        model           = local_path,
+        tokenizer       = local_path,
+        local_files_only= True,
         top_k           = None,       
         truncation      = True,       
-        max_length      = 514,
+        max_length      = 512,
     )
 
     log.info("✓ RoBERTa tensor graph allocated. Model ready for inference.")

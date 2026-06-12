@@ -31,11 +31,12 @@ def build_signal_payload(
 
 async def get_pm25(client: httpx.AsyncClient) -> tuple[float | None, str]:
    
-    pm25_val = await fetch_delhi_pm25(client)
+    pm25_val = await fetch_waqi_delhi_pm25(client)
     if pm25_val is None:
-        pm25_val_tuple = await fetch_waqi_delhi_pm25(client)
+        pm25_val_tuple = await fetch_delhi_pm25(client)
+        return pm25_val_tuple
 
-    return pm25_val_tuple
+    return pm25_val
 
 
 async def air_quality_agent_loop() -> None:
@@ -103,7 +104,6 @@ air_app = FastAPI(
 )
 
 
-@air_app.on_event("startup")
 async def startup_air_event() -> None:
     log.info("AutoNet Air Quality Agent starting up...")
     asyncio.create_task(air_quality_agent_loop())

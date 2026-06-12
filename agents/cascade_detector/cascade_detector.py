@@ -9,7 +9,7 @@ from .config import (NODE_CASCADE_ALERT_URL, NODE_LATEST_STATE_URL, EVALUATION_I
 
 
 async def cascade_detector_loop():
-    async with httpx.AsyncClient as client:
+    async with httpx.AsyncClient() as client:
         while True:
             try:
                 response = await client.get(NODE_LATEST_STATE_URL, timeout=5.0)
@@ -44,7 +44,7 @@ async def cascade_detector_loop():
 
 cascade_app = FastAPI(title="AutoNet Master Cascade Detector Engine")
 
-@cascade_app.on_event("startup")
+
 async def start_orchestrator_matrix():
     asyncio.create_task(cascade_detector_loop())
 

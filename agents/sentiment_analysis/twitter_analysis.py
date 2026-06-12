@@ -119,20 +119,17 @@ x_app = FastAPI(
 )
 
 
-@x_app.on_event("startup")
-async def startup_sentiment_event() -> None:
+async def init_sentiment_resources() -> callable:
     global roberta_pipeline, scweet_scraper
-
-    log.info("GHOSTNET Sentiment Agent starting up...")
-
+    log.info("AutoNet Sentiment Agent allocating deep learning variables...")
+    
     loop = asyncio.get_event_loop()
+    
     roberta_pipeline = await loop.run_in_executor(None, load_roberta_pipeline)
-
+    
     scweet_scraper = await loop.run_in_executor(None, load_scweet_scraper)
-
-    asyncio.create_task(sentiment_agent_loop(roberta_pipeline))
-    log.info("Background sentiment agent loop scheduled.")
-
+    
+    return roberta_pipeline
 
 @x_app.get("/status", summary="Agent liveness check", tags=["Health"])
 async def status() -> dict:

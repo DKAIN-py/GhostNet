@@ -20,8 +20,8 @@ def build_signal_payload(congestion: dict) -> dict:
     )
 
     return {
-        "agentId"     : "transit",
-        "domain"      : "transport",
+        "agentId"     : "transport",
+        "domain"      : "transit",
         "healthScore" : congestion["health_score"],
         "anomalyLevel": congestion["anomaly_level"],
         "signal"      : signal,
@@ -97,7 +97,6 @@ transport_app = FastAPI(
 )
 
 
-@transport_app.on_event("startup")
 async def startup_transit_event() -> None:
     log.info("GHOSTNET Transport Agent starting up...")
     asyncio.create_task(transport_agent_loop())
