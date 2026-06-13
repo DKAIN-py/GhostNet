@@ -9,6 +9,7 @@ const CASCADE_COOLDOWN = 5000; // 5 seconds debounce between cascades
 
 const store = {
   signals: [],
+  currentSystemState: {}, // Tracks the latest signal per agent
   activeCascade: null,
   cascadeHistory: [],
   replayData: {},
@@ -42,6 +43,8 @@ function isSignalStale(signal) {
  */
 function addSignal(signal) {
   store.signals.push(signal);
+  store.currentSystemState[signal.agentId] = signal; // Maintain O(1) map of latest state
+
 
   // Time-based prune: keep only last 24 hours
   const cutoff = new Date(Date.now() - TWENTY_FOUR_HOURS);

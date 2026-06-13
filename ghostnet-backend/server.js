@@ -14,7 +14,12 @@ const io = new Server(server, {
   cors: {
     origin: FRONTEND_URL,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
+  transports: ['polling', 'websocket'], // polling FIRST for Render compatibility
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 initEmitter(io);

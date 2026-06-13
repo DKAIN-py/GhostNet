@@ -18,6 +18,7 @@ router.post('/cascade-alert', (req, res) => {
 
   try {
     const { confidence, predictedEvent, hoursUntil, recommendation, agentsTriggered, timestamp } = req.body;
+    console.log('[CASCADE-ALERT] Received payload:', JSON.stringify(req.body));
 
     // ── Validate all fields with type checks ──
     if (
@@ -111,24 +112,19 @@ router.get('/cascade-history', (req, res) => {
 
 /**
  * GET /test
- * Fires a hardcoded fake cascade for dev smoke-testing.
- * Bypasses cooldown — this is a debug endpoint.
  */
 router.get('/test', (req, res) => {
   try {
-    const payload = {
-      confidence: 87,
-      predictedEvent: 'Severe smog emergency',
-      hoursUntil: 38,
-      recommendation: 'Issue public health advisory immediately',
-      agentsTriggered: ['air_quality', 'sentiment'],
-      timestamp: new Date().toISOString(),
-    };
+    const lastCascade = store.cascadeHistory[store.cascadeHistory.length - 1];
 
-    setCascade(payload);
-    emitCascade(payload);
+    if (!lastCascade) {
+      return res.status(404).json({ error: 'No cascade received yet. Hit /cascade-alert first.' });
+    }
 
-    return res.status(200).json({ status: 'test cascade fired', payload });
+    setCascade(lastCascade);
+    emitCascade(lastCascade);
+
+    return res.status(200).json({ status: 'test cascade fired', payload: lastCascade });
   } catch (err) {
     console.error('[ERROR] GET /test:', err);
     return res.status(500).json({ error: 'Internal server error' });

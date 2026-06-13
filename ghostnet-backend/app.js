@@ -7,6 +7,7 @@ const signalRoutes = require('./routes/signals');
 const cascadeRoutes = require('./routes/cascade');
 const historyRoutes = require('./routes/history');
 const replayRoutes = require('./routes/replay');
+const systemStateRoutes = require('./routes/system-state');
 const { seedReplayData } = require('./store/memory');
 
 const allowedOrigins = [
@@ -28,6 +29,7 @@ app.use('/', signalRoutes);
 app.use('/', cascadeRoutes);
 app.use('/history', historyRoutes);
 app.use('/replay', replayRoutes);
+app.use('/api/system-state', systemStateRoutes);
 
 seedReplayData();
 
