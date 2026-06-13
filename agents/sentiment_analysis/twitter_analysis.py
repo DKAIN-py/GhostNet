@@ -67,9 +67,13 @@ async def sentiment_agent_loop(roberta: callable) -> None:
                 )
                 health_score  = 88
                 anomaly_level = "nominal"
-                signal        = (
-                    "Sentiment engine pacing on token cooldown cycle — "
-                    "X.com session throttled or rate-limited. Baseline nominal."
+                # signal        = (
+                #     "Sentiment engine pacing on token cooldown cycle — "
+                #     "X.com session throttled or rate-limited. Baseline nominal."
+                # )
+                signal = (
+                    "Transport Congestion Detected"
+                    "Extreme Traffic Jam"
                 )
 
             try:

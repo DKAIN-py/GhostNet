@@ -42,8 +42,8 @@ def evaluate_cascade_risk(agent_data: list[dict[str, any]]) -> tuple[float, int,
         (weights["sentiment"] * state_scores.get("sentiment", 0.0))
     )
     
-    if cascade_score < 0.65:
-        return cascade_score, 0, [], {}
+    # if cascade_score < 0.65:
+    #     return cascade_score, 0, [], {}
 
     triggered_healths = [health_scores[aid] for aid in agents_triggered]
     mean_triggered_health = sum(triggered_healths) / len(triggered_healths) if triggered_healths else 100

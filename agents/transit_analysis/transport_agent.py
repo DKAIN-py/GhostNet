@@ -35,7 +35,7 @@ async def transport_agent_loop() -> None:
 
     print(DT_API_KEY, DT_API_URL)
     headers = {"Authorization": f"Bearer {DT_API_KEY}"}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=False) as client:
         while True:
             try:
                 log.info("Fetching GTFS-RT protobuf feed...")

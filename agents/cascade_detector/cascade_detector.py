@@ -18,22 +18,24 @@ async def cascade_detector_loop():
                     log.error(f"Failed to fetch system state. Status: {response.status_code} — Retrying next tick.")
                 else:
                     agent_states = response.json()
-                    if isinstance(agent_states, dict):
-                        agent_states = agent_states.get("records", [])
+                    print(agent_states)
+                    # if isinstance(agent_states, dict):
+                    #     agent_states = agent_states.get("records", [])
+                    #     print(agent_states)
                         
                     cascade_score, confidence, triggered, alert_payload = evaluate_cascade_risk(agent_states)
+                    print(alert_payload)
+                    # if cascade_score >= 0.65:
+                    log.warning(f"THRESHOLD BREACHED — Cascade Score: {cascade_score:.2f}. Pushing alert!")
                     
-                    if cascade_score >= 0.65:
-                        log.warning(f"THRESHOLD BREACHED — Cascade Score: {cascade_score:.2f}. Pushing alert!")
-                        
-                        post_response = await client.post(
-                            NODE_CASCADE_ALERT_URL, 
-                            json=alert_payload, 
-                            timeout=5.0
-                        )
-                        log.info(f"Alert Broadcast Dispatched. Node server proxy returned code: {post_response.status_code}")
-                    else:
-                        log.info(f"[SYSTEM NOMINAL] Cascade Score: {cascade_score:.2f}. Sensory channels tracking normal metrics.")
+                    post_response = await client.post(
+                        NODE_CASCADE_ALERT_URL, 
+                        json=alert_payload,
+                        timeout=5.0
+                    )
+                    log.info(f"Alert Broadcast Dispatched. Node server proxy returned code: {post_response.status_code}")
+                    # else:
+                        # log.info(f"[SYSTEM NOMINAL] Cascade Score: {cascade_score:.2f}. Sensory channels tracking normal metrics.")
                         
             except httpx.HTTPError as net_err:
                 log.error(f"Network transport boundary failure routing to Node server: {net_err}")
