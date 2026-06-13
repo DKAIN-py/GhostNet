@@ -15,7 +15,7 @@ export function useSocket(onSignal, onCascade, onCascadeClear) {
 
   useEffect(() => {
     const socket = io(SOCKET_URL, {
-      transports: ['websocket'],
+      transports: ['websocket','polling'],
       reconnectionAttempts: 5,
       reconnectionDelay: 1500,
     });

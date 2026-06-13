@@ -8,6 +8,7 @@ import CascadeModal from './components/dashboard/CascadeModal';
 import Dashboard from './pages/Dashboard';
 import Replay from './pages/Replay';
 import CascadeLog from './pages/CascadeLog';
+import NervousSystem from './pages/NervousSystem';
 
 export default function App() {
   return (
@@ -21,13 +22,13 @@ export default function App() {
               <Sidebar />
               <main className="flex-1 overflow-hidden">
                 <Routes>
-                  <Route path="/"        element={<Dashboard />}  />
-                  <Route path="/replay"  element={<Replay />}     />
-                  <Route path="/cascade" element={<CascadeLog />} />
+                  <Route path="/"        element={<Dashboard />}     />
+                  <Route path="/nervous" element={<NervousSystem />} />
+                  <Route path="/replay"  element={<Replay />}        />
+                  <Route path="/cascade" element={<CascadeLog />}    />
                 </Routes>
               </main>
             </div>
-            {/* Modal only on live dashboard */}
             <CascadeModal />
           </div>
         </BrowserRouter>

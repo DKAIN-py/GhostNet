@@ -54,11 +54,15 @@ export function GhostnetProvider({ children }) {
     dispatch({ type: 'SET_CONNECTED', payload: connected });
   }
 
-  function fireFakeCascade() {
-    dispatch({
-      type: 'CASCADE_FIRED',
-      payload: { ...MOCK_CASCADE, timestamp: new Date().toISOString() },
-    });
+  async function fireFakeCascade() {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/test`);
+      const data = await res.json();
+      dispatch({ type: 'CASCADE_FIRED', payload: data.payload });
+    } catch (err) {
+      console.error('[GHOSTNET] /test failed, using local mock:', err);
+      dispatch({ type: 'CASCADE_FIRED', payload: { ...MOCK_CASCADE, timestamp: new Date().toISOString() } });
+    }
   }
   function clearCascade()    { dispatch({ type: 'CASCADE_CLEARED'                        }); }
   function pushMockSignal(s) { dispatch({ type: 'SIGNAL_RECEIVED', payload: s            }); }
