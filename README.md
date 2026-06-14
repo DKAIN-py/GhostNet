@@ -1,6 +1,22 @@
-# GhostNet — Urban Early Warning Engine
+# Ghostnet: Autonomous Multi-Agent Civic Cascading Failure Detector
 
-Real-time multi-agent AI system monitoring Delhi's air quality, transport, and social sentiment. Detects cascade risk across domains and fires alerts before emergencies escalate.
+Ghostnet is a high-performance, decentralized event-driven multi-agent framework designed to detect, cross-correlate, and predict civic and environmental cascading crises in real-time. By monitoring live open government transit telemetry, hyper-local air quality index streams, and urban public sentiment channels, Ghostnet calculates systemic risk indices to forecast multi-domain infrastructure failures before they manifest.
+
+## The Real-World Application
+
+In modern mega-cities like Delhi, critical infrastructure systems do not fail in isolation; they trigger cascading degradation chains. For example:
+
+  The Catalyst: Air Quality indices spike to hazardous levels due to meteorological or industrial shifts.
+
+  The Secondary Fracture: Severe regional smog drops visual boundaries, grinding the state road transit infrastructure (GTFS-RT) to a bottleneck gridlock.
+
+  The Civic Cascade: Public sentiment channels experience severe negativity spikes as citizens report breathing difficulties and commuting delays online.
+
+## Real-World Deployment Value
+
+  Early Warning Window: Ghostnet identifies cross-correlation patterns and sounds systemic crisis alarms up to 36 hours before regional governments typically declare emergency physical school suspensions or commercial border lockdowns.
+
+  Smart Resource Allocation: Enables traffic municipal systems and public health infrastructures to automatically deploy emergency transit routes, dispatch mask distributions, and implement heavy-vehicle border limits dynamically based on live agent telemetry.
 
 
 ## Architecture
