@@ -1,0 +1,14 @@
+[project]
+name = "auto-net-agents"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dotenv>=0.9.9",
+    "fastapi[standard]>=0.141.1",
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "pydantic>=2.13.4",
+    "requests>=2.34.2",
+]
