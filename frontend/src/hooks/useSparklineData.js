@@ -1,26 +1,34 @@
 import { useState, useEffect } from 'react';
 import { useGhostnet } from '../context/GhostnetContext';
 
-// Keeps last 10 healthScore readings per agent for sparkline
+const HISTORY_LEN = 10;
+
+// Keeps the last N healthScore readings per (sectorId, agentId) pair, so any
+// signal in the 468-signal mesh can get a sparkline, not just 3 fixed agents.
+// Consumers key into the returned object with `${sectorId}:${agentId}`.
 export function useSparklineData() {
-  const { signals } = useGhostnet();
-  const [history, setHistory] = useState({
-    air_quality: [55, 50, 48, 42, 38, 35, 34, 34, 34, 34],
-    transport:   [80, 75, 70, 65, 62, 58, 55, 55, 55, 55],
-    sentiment:   [60, 52, 45, 38, 33, 30, 28, 28, 28, 28],
-  });
+  const { allSignals } = useGhostnet();
+  const [history, setHistory] = useState({});
 
   useEffect(() => {
     setHistory((prev) => {
       const updated = { ...prev };
-      Object.values(signals).forEach((sig) => {
+      (allSignals || []).forEach((sig) => {
         if (!sig) return;
-        const current = prev[sig.agentId] ?? [];
-        updated[sig.agentId] = [...current, sig.healthScore].slice(-10);
+        const key = `${sig.sectorId}:${sig.agentId}`;
+        const current = prev[key] ?? [];
+        const next = [...current, sig.healthScore].slice(-HISTORY_LEN);
+        // Skip the update if nothing actually changed, to avoid a render
+        // loop when allSignals re-renders with identical values.
+        if (current[current.length - 1] !== sig.healthScore) {
+          updated[key] = next;
+        } else if (!updated[key]) {
+          updated[key] = next;
+        }
       });
       return updated;
     });
-  }, [signals]);
+  }, [allSignals]);
 
   return history;
 }

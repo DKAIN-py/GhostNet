@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard';
 import Replay from './pages/Replay';
 import CascadeLog from './pages/CascadeLog';
 import NervousSystem from './pages/NervousSystem';
+import CityMap from './pages/CityMap';
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
                 <Routes>
                   <Route path="/"        element={<Dashboard />}     />
                   <Route path="/nervous" element={<NervousSystem />} />
+                  <Route path="/citymap" element={<CityMap />}       />
                   <Route path="/replay"  element={<Replay />}        />
                   <Route path="/cascade" element={<CascadeLog />}    />
                 </Routes>

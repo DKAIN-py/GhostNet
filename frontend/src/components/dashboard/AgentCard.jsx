@@ -2,26 +2,25 @@ import { useEffect, useRef } from "react";
 import { LineChart, Line, ResponsiveContainer, Tooltip } from "recharts";
 import { T, getSeverityStyle } from "../../lib/theme";
 import { useGhostnet } from "../../context/GhostnetContext";
-
-const AGENT_META = {
-  air_quality: { label: "AIR QUALITY", source: "OpenAQ" },
-  transport: { label: "TRANSPORT", source: "TomTom" },
-  sentiment: { label: "SENTIMENT", source: "Twitter/X" },
-};
+import { AGENT_META } from "../../lib/schema";
 
 export default function AgentCard({ signal, sparkline = [] }) {
   if (!signal) return null;
 
   const { cascade } = useGhostnet();
 
-  const meta = AGENT_META[signal.agentId];
-  const sev = getSeverityStyle(signal.anomalyLevel);
+  const meta = AGENT_META[signal.agentId] || {};
+  const sev = getSeverityStyle(signal.anomalyLevel === "warning" ? "moderate" : signal.anomalyLevel);
   const isCritical = signal.anomalyLevel === "critical";
-  const isModerate = signal.anomalyLevel === "moderate";
+  const isModerate = signal.anomalyLevel === "warning" || signal.anomalyLevel === "moderate";
 
-  // During cascade ALL cards flip to alarm state
-  const cascadeActive = !!cascade;
-  const triggeredByCascade = cascade?.agentsTriggered?.includes(signal.agentId);
+  // A signal only counts as "triggered" if it's both an agent the cascade
+  // engine flagged AND in the sector the cascade actually touched — with
+  // 39 sectors sharing the same 12 agentIds, agent match alone isn't enough.
+  const triggeredByCascade =
+    !!cascade &&
+    cascade.triggeredAgents?.includes(signal.agentId) &&
+    (cascade.primarySectorId === signal.sectorId || cascade.spatialSpread?.includes(signal.sectorId));
 
   const prevScore = useRef(signal.healthScore);
   const scoreChanged = prevScore.current !== signal.healthScore;
@@ -31,48 +30,27 @@ export default function AgentCard({ signal, sparkline = [] }) {
 
   const chartData = sparkline.map((v, i) => ({ i, v }));
 
-  // ── Visual state ────────────────────────────────────────
-  const cardBg = cascadeActive
-    ? T.cascade.bg
-    : isCritical
-    ? T.severity.critical.bg
-    : T.bg.card;
-
-  const cardText = cascadeActive
-    ? T.cascade.text
-    : isCritical
-    ? T.severity.critical.text
-    : T.text.primary;
-
-  const cardBorder = cascadeActive
+  const cardBg = triggeredByCascade ? T.cascade.bg : isCritical ? T.severity.critical.bg : T.bg.card;
+  const cardText = triggeredByCascade ? T.cascade.text : isCritical ? T.severity.critical.text : T.text.primary;
+  const cardBorder = triggeredByCascade
     ? `2px solid ${T.cascade.border}`
     : isCritical
     ? `2px solid ${T.border.strong}`
     : isModerate
     ? `1px solid ${T.border.default}`
     : `1px solid ${T.border.subtle}`;
-
-  const subColor = cascadeActive
-    ? "rgba(252,250,245,0.45)"
-    : isCritical
-    ? "rgba(252,250,245,0.5)"
-    : T.text.secondary;
-
-  const microColor = cascadeActive
-    ? "rgba(252,250,245,0.30)"
-    : isCritical
-    ? "rgba(252,250,245,0.35)"
-    : T.text.micro;
+  const subColor = triggeredByCascade ? "rgba(252,250,245,0.45)" : isCritical ? "rgba(252,250,245,0.5)" : T.text.secondary;
+  const microColor = triggeredByCascade ? "rgba(252,250,245,0.30)" : isCritical ? "rgba(252,250,245,0.35)" : T.text.micro;
 
   return (
     <div
-      className="flex flex-col gap-3 p-4 transition-all duration-500"
+      className="flex flex-col gap-3 p-4 transition-all duration-500 min-w-0"
       style={{
         background: cardBg,
         color: cardText,
         border: cardBorder,
         fontFamily: T.font.mono,
-        animation: cascadeActive
+        animation: triggeredByCascade
           ? "pulse-border-cascade 1s ease infinite"
           : isCritical
           ? "pulse-border 1.5s ease infinite"
@@ -80,23 +58,26 @@ export default function AgentCard({ signal, sparkline = [] }) {
       }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <span
-          className="text-[10px] tracking-[0.25em] uppercase font-bold"
-          style={{ color: microColor }}
-        >
-          {meta.label}
-        </span>
-        <div className="flex items-center gap-2">
-          {/* Show TRIGGERED badge if this agent caused the cascade */}
-          {cascadeActive && triggeredByCascade && (
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[10px] tracking-[0.2em] uppercase font-bold truncate" style={{ color: microColor }}>
+            {meta.label || signal.agentId}
+          </span>
+          {signal.isLiveAnchor && (
+            <span
+              className="text-[8px] tracking-widest uppercase font-bold px-1.5 py-0.5 shrink-0"
+              style={{ border: `1px solid ${microColor}`, color: microColor }}
+              title="Live data anchor — real API feed, not simulated"
+            >
+              LIVE
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {triggeredByCascade && (
             <span
               className="text-[9px] px-2 py-0.5 tracking-widest uppercase font-bold"
-              style={{
-                border: `1px solid ${T.cascade.text}`,
-                color: T.cascade.text,
-                background: "transparent",
-              }}
+              style={{ border: `1px solid ${T.cascade.text}`, color: T.cascade.text }}
             >
               TRIGGERED
             </span>
@@ -104,36 +85,32 @@ export default function AgentCard({ signal, sparkline = [] }) {
           <span
             className="text-[9px] px-2 py-0.5 tracking-widest uppercase font-bold"
             style={{
-              border: `1px solid ${
-                cascadeActive ? T.cascade.text : sev.border
-              }`,
-              color: cascadeActive ? T.cascade.text : sev.text ?? cardText,
-              background: "transparent",
+              border: `1px solid ${triggeredByCascade ? T.cascade.text : sev.border}`,
+              color: triggeredByCascade ? T.cascade.text : sev.text ?? cardText,
             }}
           >
-            {signal.anomalyLevel.toUpperCase()}
+            {signal.anomalyLevel?.toUpperCase()}
           </span>
         </div>
       </div>
 
+      {/* Sector context — a signal alone doesn't say where anymore */}
+      <span className="text-[8px] tracking-wider truncate" style={{ color: microColor }}>
+        {signal.sectorId} · {signal.district}
+      </span>
+
       {/* Health Score */}
       <div className="flex items-baseline gap-2">
         <span
-          className="text-5xl font-bold tracking-tight leading-none transition-all duration-300"
-          style={{
-            color: cardText,
-            animation: scoreChanged ? "score-flash 0.4s ease" : "none",
-          }}
+          className="text-4xl sm:text-5xl font-bold tracking-tight leading-none transition-all duration-300"
+          style={{ color: cardText, animation: scoreChanged ? "score-flash 0.4s ease" : "none" }}
         >
           {signal.healthScore}
         </span>
         <span className="text-sm tracking-widest" style={{ color: subColor }}>
           /100
         </span>
-        <span
-          className="text-[9px] tracking-widest ml-1"
-          style={{ color: microColor }}
-        >
+        <span className="text-[9px] tracking-widest ml-1 hidden sm:inline" style={{ color: microColor }}>
           HEALTH
         </span>
       </div>
@@ -141,18 +118,11 @@ export default function AgentCard({ signal, sparkline = [] }) {
       {/* Progress bar */}
       <div
         className="w-full h-[2px] relative overflow-hidden"
-        style={{
-          background: cascadeActive
-            ? "rgba(252,250,245,0.15)"
-            : T.border.subtle,
-        }}
+        style={{ background: triggeredByCascade ? "rgba(252,250,245,0.15)" : T.border.subtle }}
       >
         <div
           className="h-full transition-all duration-700"
-          style={{
-            width: `${100 - signal.healthScore}%`,
-            background: cardText,
-          }}
+          style={{ width: `${100 - signal.healthScore}%`, background: cardText }}
         />
       </div>
 
@@ -161,21 +131,11 @@ export default function AgentCard({ signal, sparkline = [] }) {
         <div style={{ height: 40, marginLeft: -8, marginRight: -8 }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
-              <Line
-                type="monotone"
-                dataKey="v"
-                stroke={cardText}
-                strokeWidth={1}
-                dot={false}
-                isAnimationActive
-                animationDuration={400}
-              />
+              <Line type="monotone" dataKey="v" stroke={cardText} strokeWidth={1} dot={false} isAnimationActive animationDuration={400} />
               <Tooltip
                 contentStyle={{
                   background: cardBg,
-                  border: `1px solid ${
-                    cascadeActive ? T.cascade.text : T.border.default
-                  }`,
+                  border: `1px solid ${triggeredByCascade ? T.cascade.text : T.border.default}`,
                   color: cardText,
                   fontSize: "10px",
                   fontFamily: T.font.mono,
@@ -190,19 +150,16 @@ export default function AgentCard({ signal, sparkline = [] }) {
       )}
 
       {/* Signal text */}
-      <p className="text-[10px] leading-relaxed" style={{ color: subColor }}>
+      <p className="text-[10px] leading-relaxed line-clamp-3" style={{ color: subColor }}>
         {signal.signal}
       </p>
 
       {/* Footer */}
-      <div className="flex items-center justify-between">
-        <span
-          className="text-[9px] tracking-widest uppercase"
-          style={{ color: microColor }}
-        >
-          /{meta.source}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[9px] tracking-widest uppercase truncate" style={{ color: microColor }}>
+          /{meta.dataAnchor?.split(" ")[0] || meta.domain || "source"}
         </span>
-        <span className="text-[9px]" style={{ color: microColor }}>
+        <span className="text-[9px] shrink-0" style={{ color: microColor }}>
           {new Date(signal.timestamp).toLocaleTimeString("en-IN", {
             hour12: false,
             hour: "2-digit",
