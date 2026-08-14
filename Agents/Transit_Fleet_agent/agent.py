@@ -1,11 +1,10 @@
-# Agents/Transit_fleet_agent/agent.py
 import asyncio
-from dotenv import load_dotenv
 from datetime import datetime, timezone
 import logging
 from typing import Any, Dict
+from dotenv import load_dotenv
+import socketio
 import httpx
-import os
 
 from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
@@ -16,7 +15,6 @@ load_dotenv()
 
 log = logging.getLogger("autonet.agent.transit")
 
-BACKEND_URL=os.getenv("BACKEND_URL")
 
 class GenericTransitAgent(BaseAgent):
     """
@@ -27,20 +25,21 @@ class GenericTransitAgent(BaseAgent):
     def __init__(
         self,
         config: SectorConfig,
-        backend_url: str = BACKEND_URL,
+        sio: socketio.AsyncClient,
         poll_interval: int = 60,
     ) -> None:
         self.config = config
-        self.backend_url = backend_url
+        self.sio = sio
         self.poll_interval = poll_interval
         self.agent_id = "transit_fleet"
         self.domain = "transit"
 
-        self._client: httpx.AsyncClient | None = None
+        # HTTP client kept solely for external GTFS-RT feed fetching
+        self._http_client: httpx.AsyncClient | None = None
         self._loop_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        self._client = httpx.AsyncClient(timeout=10.0)
+        self._http_client = httpx.AsyncClient(timeout=10.0)
         self._loop_task = asyncio.create_task(self._run_loop())
         log.info("[%s] TransitAgent active for %s", self.config.sector_id, self.config.name)
 
@@ -51,14 +50,15 @@ class GenericTransitAgent(BaseAgent):
                 await self._loop_task
             except asyncio.CancelledError:
                 pass
-        if self._client:
-            await self._client.aclose()
+        if self._http_client:
+            await self._http_client.aclose()
 
     async def _run_loop(self) -> None:
-        # Multi-variable hash stagger to avoid request bursts
+        # Domain phase offset + sector jitter
+        domain_base_delay = 15.0  # Transit domain phase offset
         node_hash = hash(f"{self.config.sector_id}_{self.agent_id}")
-        stagger_delay = (node_hash % 250) / 10.0
-        await asyncio.sleep(stagger_delay)
+        sector_jitter = (node_hash % 250) / 10.0
+        await asyncio.sleep(domain_base_delay + sector_jitter)
 
         while True:
             try:
@@ -71,13 +71,13 @@ class GenericTransitAgent(BaseAgent):
             await asyncio.sleep(self.poll_interval)
 
     async def step(self) -> Dict[str, Any] | None:
-        """Executes one step: Ingest Kinematics -> Calculate Stagnation -> Dispatch Signal."""
-        if not self._client:
+        """Executes one step: Ingest Kinematics -> Calculate Stagnation -> Dispatch Signal via Socket.io."""
+        if not self._http_client:
             return None
 
-        # 1. Fetch GTFS Fleet Telemetry
+        # 1. Fetch GTFS Fleet Telemetry (Uses HTTP client for external API)
         fleet = await GtfsFetcher.fetch_fleet_kinematics(
-            client=self._client,
+            client=self._http_client,
             sector_id=self.config.sector_id,
             baseline_capacity=self.config.baseline_bus_capacity,
             lat=self.config.lat,
@@ -137,10 +137,13 @@ class GenericTransitAgent(BaseAgent):
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
-        # 4. Dispatch Signal
+        # 4. Dispatch Signal via Shared Socket.io Connection
         try:
-            await self._client.post(self.backend_url, json=payload, timeout=5.0)
+            if self.sio.connected:
+                await self.sio.emit("agent-signal", payload)
+            else:
+                log.warning("[%s] Socket.io not connected, dropping transit signal", self.config.sector_id)
         except Exception as e:
-            log.error("[%s] Transit signal dispatch failed: %s", self.config.sector_id, e)
+            log.error("[%s] Transit socket dispatch failed: %s", self.config.sector_id, e)
 
         return payload

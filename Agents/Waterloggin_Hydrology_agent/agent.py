@@ -1,11 +1,10 @@
-# Agents/Waterlogging_hydrology_agent/agent.py
 import asyncio
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 import logging
 from typing import Any, Dict
+import socketio
 import httpx
-import os
 
 from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
@@ -16,7 +15,6 @@ load_dotenv()
 
 log = logging.getLogger("autonet.agent.waterlogging")
 
-BACKEND_URL=os.getenv("BACKEND_URL")
 
 class GenericWaterloggingAgent(BaseAgent):
     """
@@ -27,20 +25,21 @@ class GenericWaterloggingAgent(BaseAgent):
     def __init__(
         self,
         config: SectorConfig,
-        backend_url: str = BACKEND_URL,
+        sio: socketio.AsyncClient,
         poll_interval: int = 60,
     ) -> None:
         self.config = config
-        self.backend_url = backend_url
+        self.sio = sio
         self.poll_interval = poll_interval
         self.agent_id = "waterlogging_hydrology"
         self.domain = "environment"
 
-        self._client: httpx.AsyncClient | None = None
+        # HTTP client kept solely for external API telemetry fetching
+        self._http_client: httpx.AsyncClient | None = None
         self._loop_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        self._client = httpx.AsyncClient(timeout=10.0)
+        self._http_client = httpx.AsyncClient(timeout=10.0)
         self._loop_task = asyncio.create_task(self._run_loop())
         log.info("[%s] WaterloggingAgent active for %s", self.config.sector_id, self.config.name)
 
@@ -51,11 +50,15 @@ class GenericWaterloggingAgent(BaseAgent):
                 await self._loop_task
             except asyncio.CancelledError:
                 pass
-        if self._client:
-            await self._client.aclose()
+        if self._http_client:
+            await self._http_client.aclose()
 
     async def _run_loop(self) -> None:
-        await asyncio.sleep((hash(self.config.sector_id) % 400)/15 )
+        # Domain phase offset + sector jitter
+        domain_base_delay = 5.0  # Hydrology domain offset
+        sector_jitter = (hash(f"{self.config.sector_id}_{self.agent_id}") % 300) / 20.0
+        await asyncio.sleep(domain_base_delay + sector_jitter)
+
         while True:
             try:
                 await self.step()
@@ -67,13 +70,13 @@ class GenericWaterloggingAgent(BaseAgent):
             await asyncio.sleep(self.poll_interval)
 
     async def step(self) -> Dict[str, Any] | None:
-        """Executes one step: Fetch Rain -> Compute Depth -> Format Payload -> Dispatch."""
-        if not self._client:
+        """Executes one step: Fetch Rain -> Compute Depth -> Format Payload -> Dispatch via Socket.io."""
+        if not self._http_client:
             return None
 
-        # 1. Fetch Real-time Rain Telemetry
+        # 1. Fetch Real-time Rain Telemetry (Uses HTTP client for external API)
         rain_data = await RainApiFetcher.fetch_precipitation(
-            client=self._client,
+            client=self._http_client,
             lat=self.config.lat,
             lng=self.config.lng
         )
@@ -85,10 +88,10 @@ class GenericWaterloggingAgent(BaseAgent):
         drain_cap_pct = HydrologyModel.calculate_drain_capacity_pct(accumulated_24h)
 
         # Determine pump operational state based on rain load
-        if rainfall_rate > 50.0:
-            pump_status = "partially_failing"
-        elif rainfall_rate > 80.0:
+        if rainfall_rate > 80.0:
             pump_status = "offline"
+        elif rainfall_rate > 50.0:
+            pump_status = "partially_failing"
         else:
             pump_status = "optimal"
 
@@ -157,10 +160,13 @@ class GenericWaterloggingAgent(BaseAgent):
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
-        # 4. Dispatch Signal
+        # 4. Dispatch Signal via Persistent Socket.io Channel
         try:
-            await self._client.post(self.backend_url, json=payload, timeout=5.0)
+            if self.sio.connected:
+                await self.sio.emit("agent-signal", payload)
+            else:
+                log.warning("[%s] Socket.io not connected, dropping hydrology signal", self.config.sector_id)
         except Exception as e:
-            log.error("[%s] Hydrology signal dispatch failed: %s", self.config.sector_id, e)
+            log.error("[%s] Hydrology socket dispatch failed: %s", self.config.sector_id, e)
 
         return payload

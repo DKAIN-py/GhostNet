@@ -1,9 +1,15 @@
-# master_app.py
+"""
+Need to Create a ML model on the historical data of Metero system from Open transit data
+"""
+
+
+
 import asyncio
 from contextlib import asynccontextmanager
 import logging
 from typing import List
 import os
+import socketio
 from dotenv import load_dotenv
 
 from fastapi import FastAPI
@@ -14,51 +20,71 @@ from .Agents.Smog_and_Dispersion_agent.agent import GenericSmogAgent
 from .Agents.Waterloggin_Hydrology_agent.agent import GenericWaterloggingAgent
 from .Agents.Thermal_Stress_agent.agent import GenericThermalAgent
 from .Agents.Transit_Fleet_agent.agent import GenericTransitAgent
+from .Agents.Arterial_Congestion_agent.agent import GenericRoadCorridorAgent
+from .Agents.Power_Grid_agent.agent import GenericPowerGridAgent
 
 log = logging.getLogger("autonet.master")
 
 load_dotenv()
 
+SOCKET_URL = os.getenv("SOCKET_URL", "http://localhost:3001")
+
 # Global registry to hold active agent instances
 active_agents: List[BaseAgent] = []
 
-ALL_AGENTS = [
+# Single shared Socket.io async client instance
+sio = socketio.AsyncClient()
+
+ALL_AGENT_CLASSES = [
     GenericSmogAgent,
     GenericWaterloggingAgent,
     GenericThermalAgent,
-    GenericTransitAgent
+    GenericTransitAgent,
+    GenericRoadCorridorAgent,
+    GenericPowerGridAgent,
 ]
 
-BACKEND_URL=os.getenv("BACKEND_URL")
 
 @asynccontextmanager
 async def master_lifespan(app: FastAPI):
     """
     Master lifespan manager.
-    Instantiates and boots agents across all configured sectors on startup,
-    and handles graceful shutdown on server stop.
+    Connects to Node.js Socket.io server, instantiates and boots agents
+    across all configured sectors on startup, and handles graceful shutdown.
     """
     log.info("Starting AutoNet Multi-Agent Engine...")
 
-    # 1. Instantiate and start a Smog Agent for EVERY sector in the registry
+    # 1. Establish persistent Socket.io connection to Node.js backend
+    try:
+        await sio.connect(SOCKET_URL)
+        log.info(" Connected shared Socket.io client to %s", SOCKET_URL)
+    except Exception as exc:
+        log.error(" Failed to connect to Socket.io server at %s: %s", SOCKET_URL, exc)
+
+    # 2. Instantiate and start all 5 agents for EVERY sector in the registry
     for sector_config in ALL_SECTORS:
-        for agent in ALL_AGENTS:
-            curr_agent = agent(
+        for AgentClass in ALL_AGENT_CLASSES:
+            curr_agent = AgentClass(
                 config=sector_config,
-                backend_url=BACKEND_URL,
+                sio=sio,
                 poll_interval=60
             )
             await curr_agent.start()
             active_agents.append(curr_agent)
 
-    log.info("Successfully booted %d smog_dispersion agent nodes.", len(active_agents))
+    log.info(" Successfully booted %d agent nodes across %d sectors.", len(active_agents), len(ALL_SECTORS))
 
     yield  # Application runs here and accepts HTTP traffic
 
-    # 2. Graceful Shutdown: Stop all background polling tasks
+    # 3. Graceful Shutdown: Stop all background agent loops and disconnect Socket.io
     log.info("Shutting down AutoNet Multi-Agent Engine...")
     await asyncio.gather(*(agent.stop() for agent in active_agents), return_exceptions=True)
     active_agents.clear()
+
+    if sio.connected:
+        await sio.disconnect()
+        log.info("Socket.io client disconnected.")
+
     log.info("All agent nodes offline.")
 
 
@@ -72,8 +98,14 @@ app = FastAPI(
 
 @app.get("/health", tags=["System"])
 async def health_check():
+    running_nodes = [
+        f"{a.config.sector_id}:{a.agent_id}"
+        for a in active_agents
+        if a._loop_task and not a._loop_task.done()
+    ]
     return {
         "status": "online",
-        "active_smog_nodes": len(active_agents),
-        "nodes_running": [a.config.sector_id for a in active_agents if a._loop_task and not a._loop_task.done()]
+        "socket_connected": sio.connected,
+        "active_agent_nodes": len(active_agents),
+        "running_nodes_count": len(running_nodes),
     }

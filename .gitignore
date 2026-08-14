@@ -11,8 +11,15 @@ wheels/
 
 .env
 
+# python testing
 unistat.py
+test.py
 
-mock_backend.py
-
+# internal doc
 context.md
+*.html
+
+# mock backend
+*.js
+*.json
+node_modules

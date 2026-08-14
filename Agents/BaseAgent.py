@@ -19,11 +19,3 @@ class BaseAgent(ABC):
     @abstractmethod
     async def step(self) -> Dict[str, Any] | None:
         pass
-
-    # @abstractmethod
-    # def build_payload(self) -> Dict[str, Any]:
-    #     pass
-
-    # @abstractmethod
-    # async def dispatch_signal(self) -> None:
-    #     pass

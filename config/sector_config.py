@@ -28,3 +28,17 @@ class SectorConfig(BaseModel):
     # Transit & Mobility Metadata
     primary_choke_corridor: str = None
     baseline_bus_capacity: int = 35  # Expected active buses in sector geofence
+
+    # New: Arterial Corridor Metadata
+    primary_corridor_name: str = None
+    free_flow_speed_kmh: float = 55.0
+    upstream_sector_id: Optional[str] = None
+    recommended_bypass_route: str = None
+
+    # Agent 7 (power_grid) Fields
+    discom_provider: str = None
+    rated_substation_capacity_mw: float = 200.0
+
+    # Agent 8 (industrial_hazard) Fields
+    is_industrial_zone: bool = False
+    industrial_zone_type: str = None

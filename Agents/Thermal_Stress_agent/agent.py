@@ -1,9 +1,9 @@
-# Agents/Thermal_stress_agent/agent.py
 import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Any, Dict
 from dotenv import load_dotenv
+import socketio
 import httpx
 import os
 
@@ -16,7 +16,6 @@ load_dotenv()
 
 log = logging.getLogger("autonet.agent.thermal")
 
-BACKEND_URL=os.getenv("BACKEND_URL")
 
 class GenericThermalAgent(BaseAgent):
     """
@@ -27,20 +26,21 @@ class GenericThermalAgent(BaseAgent):
     def __init__(
         self,
         config: SectorConfig,
-        backend_url: str = BACKEND_URL,
+        sio: socketio.AsyncClient,
         poll_interval: int = 60,
     ) -> None:
         self.config = config
-        self.backend_url = backend_url
+        self.sio = sio
         self.poll_interval = poll_interval
         self.agent_id = "thermal_stress"
         self.domain = "environment"
 
-        self._client: httpx.AsyncClient | None = None
+        # HTTP client kept solely for external weather API telemetry calls
+        self._http_client: httpx.AsyncClient | None = None
         self._loop_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        self._client = httpx.AsyncClient(timeout=10.0)
+        self._http_client = httpx.AsyncClient(timeout=10.0)
         self._loop_task = asyncio.create_task(self._run_loop())
         log.info("[%s] ThermalAgent active for %s", self.config.sector_id, self.config.name)
 
@@ -51,11 +51,15 @@ class GenericThermalAgent(BaseAgent):
                 await self._loop_task
             except asyncio.CancelledError:
                 pass
-        if self._client:
-            await self._client.aclose()
+        if self._http_client:
+            await self._http_client.aclose()
 
     async def _run_loop(self) -> None:
-        await asyncio.sleep((hash(self.config.sector_id) % 200)/10)
+        # Domain phase offset + sector jitter
+        domain_base_delay = 10.0  # Thermal domain offset
+        sector_jitter = (hash(f"{self.config.sector_id}_{self.agent_id}") % 200) / 10.0
+        await asyncio.sleep(domain_base_delay + sector_jitter)
+
         while True:
             try:
                 await self.step()
@@ -67,13 +71,13 @@ class GenericThermalAgent(BaseAgent):
             await asyncio.sleep(self.poll_interval)
 
     async def step(self) -> Dict[str, Any] | None:
-        """Executes one step: Fetch Weather -> Compute UHI & Grid Risk -> Dispatch Signal."""
-        if not self._client:
+        """Executes one step: Fetch Weather -> Compute UHI & Grid Risk -> Dispatch Signal via Socket.io."""
+        if not self._http_client:
             return None
 
-        # 1. Fetch Real-time Thermal Telemetry
+        # 1. Fetch Real-time Thermal Telemetry (Uses HTTP client for external API)
         telemetry = await WeatherApiFetcher.fetch_thermal_telemetry(
-            client=self._client,
+            client=self._http_client,
             lat=self.config.lat,
             lng=self.config.lng
         )
@@ -141,10 +145,13 @@ class GenericThermalAgent(BaseAgent):
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
-        # 5. Dispatch Signal
+        # 5. Dispatch Signal via Shared Socket.io Channel
         try:
-            await self._client.post(self.backend_url, json=payload, timeout=5.0)
+            if self.sio.connected:
+                await self.sio.emit("agent-signal", payload)
+            else:
+                log.warning("[%s] Socket.io not connected, dropping thermal signal", self.config.sector_id)
         except Exception as e:
-            log.error("[%s] Thermal signal dispatch failed: %s", self.config.sector_id, e)
+            log.error("[%s] Thermal socket dispatch failed: %s", self.config.sector_id, e)
 
         return payload
