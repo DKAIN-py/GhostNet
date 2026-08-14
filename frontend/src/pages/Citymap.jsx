@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Viewer, Entity, CustomDataSource } from "resium";
 import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
+import { useLocation } from "react-router-dom";
 
 import { useGhostnet } from "../context/GhostnetContext";
 import { T, getSeverityStyle } from "../lib/theme";
@@ -317,9 +318,17 @@ function SectorBoundary({ sector, health, cascadeRole }) {
 
 /* -------------------------------------------------------------------------- */
 /* Icon generation — canvas -> data URL, memoized.                            */
+/*                                                                             */
+/* RENDER_SCALE supersamples every icon at 2x the pixel size it's actually    */
+/* displayed at (Cesium billboard width/height stay the same as before).     */
+/* Cesium scales billboard textures down to the requested display size, and  */
+/* scaling a 1:1 canvas down still leaves soft/aliased edges on most GPUs —  */
+/* rendering at 2x and letting Cesium's minification filter downsample it is */
+/* what actually produces crisp icons instead of the blurry stamped look.    */
 /* -------------------------------------------------------------------------- */
 
 const iconCache = new Map();
+const RENDER_SCALE = 2;
 
 function buildBadgeIcon(agentId, severity, healthScore, highlighted) {
   const healthBucket = Math.round((healthScore ?? 50) / 5) * 5;
@@ -330,17 +339,19 @@ function buildBadgeIcon(agentId, severity, healthScore, highlighted) {
   const glyph = AGENT_GLYPH[agentId] || "\u25CF";
   const severityFrac = Math.max(0.04, Math.min(1, 1 - healthBucket / 100));
 
-  const size = 112;
+  const size = 112 * RENDER_SCALE;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   const cx = size / 2;
   const cy = size / 2;
-  const outerR = size / 2 - 6;
-  const ringWidth = 6;
-  const badgeR = outerR - ringWidth - 4;
+  const outerR = size / 2 - 6 * RENDER_SCALE;
+  const ringWidth = 6 * RENDER_SCALE;
+  const badgeR = outerR - ringWidth - 4 * RENDER_SCALE;
 
   if (highlighted) {
     const grad = ctx.createRadialGradient(cx, cy, badgeR * 0.6, cx, cy, outerR * 1.6);
@@ -371,7 +382,7 @@ function buildBadgeIcon(agentId, severity, healthScore, highlighted) {
   ctx.arc(cx, cy, badgeR, 0, Math.PI * 2);
   ctx.fillStyle = T.bg.card;
   ctx.fill();
-  ctx.lineWidth = severity === "critical" ? 3.5 : 2.5;
+  ctx.lineWidth = (severity === "critical" ? 3.5 : 2.5) * RENDER_SCALE;
   ctx.strokeStyle = accent;
   ctx.stroke();
 
@@ -380,7 +391,7 @@ function buildBadgeIcon(agentId, severity, healthScore, highlighted) {
   ctx.font = `${Math.round(badgeR * 1.1)}px "Segoe UI Symbol", "Noto Sans Symbols", sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(glyph, cx, cy + 2);
+  ctx.fillText(glyph, cx, cy + 2 * RENDER_SCALE);
 
   const url = canvas.toDataURL();
   iconCache.set(key, url);
@@ -391,17 +402,19 @@ function buildSectorDotIcon(colorHex) {
   const key = `dot:${colorHex}`;
   if (iconCache.has(key)) return iconCache.get(key);
 
-  const size = 20;
+  const size = 20 * RENDER_SCALE;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size / 2 - 3, 0, Math.PI * 2);
+  ctx.arc(size / 2, size / 2, size / 2 - 3 * RENDER_SCALE, 0, Math.PI * 2);
   ctx.fillStyle = colorHex;
   ctx.fill();
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2 * RENDER_SCALE;
   ctx.strokeStyle = T.bg.card;
   ctx.stroke();
 
@@ -414,12 +427,14 @@ function buildClusterIcon(count, accent) {
   const key = `cluster:${count}:${accent}`;
   if (iconCache.has(key)) return iconCache.get(key);
 
-  const size = 100;
+  const size = 100 * RENDER_SCALE;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
-  const cx = size / 2, cy = size / 2, r = size / 2 - 6;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  const cx = size / 2, cy = size / 2, r = size / 2 - 6 * RENDER_SCALE;
 
   const grad = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r * 1.5);
   grad.addColorStop(0, hexToRgba(accent, 0.35));
@@ -433,7 +448,7 @@ function buildClusterIcon(count, accent) {
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = T.text.primary;
   ctx.fill();
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 4 * RENDER_SCALE;
   ctx.strokeStyle = T.bg.card;
   ctx.stroke();
 
@@ -441,7 +456,7 @@ function buildClusterIcon(count, accent) {
   ctx.font = `bold ${Math.round(r * 0.85)}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(String(count), cx, cy + 2);
+  ctx.fillText(String(count), cx, cy + 2 * RENDER_SCALE);
 
   const url = canvas.toDataURL();
   iconCache.set(key, url);
@@ -460,12 +475,11 @@ function AnomalyBadge({ signal, highlighted, dimmed, onClick }) {
   const icon = buildBadgeIcon(signal.agentId, severity, signal.healthScore, highlighted);
   const headline = headlineFor(signal.agentId, signal.metrics);
 
-  // Only critical (or cascade-highlighted) pins keep an always-on text
-  // label. Everything else is icon-only until clicked, so a cluster of
-  // warning-level pins never turns into a wall of overlapping text — and
-  // ALL labels disappear the moment another signal is selected, so the
-  // selected zone's own label is the only text on screen near it.
-  const showLabel = !dimmed && (severity === "critical" || highlighted);
+  // Only critical (or cascade-highlighted) pins are even candidates for a
+  // text label, and even then only once the camera is close — see
+  // distanceDisplayCondition below. At city-wide zoom this keeps the whole
+  // view to icons only; labels appear once you've zoomed into a sector or
+  // two, which is also exactly when they stop overlapping each other.
 
   return (
     <Entity
@@ -479,20 +493,7 @@ function AnomalyBadge({ signal, highlighted, dimmed, onClick }) {
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       }}
-      label={showLabel ? {
-        text: `${(AGENT_META[signal.agentId]?.label || signal.agentId).toUpperCase()}  ·  ${headline}`,
-        font: `${severity === "critical" ? "bold " : ""}10px ${T.font.mono}`,
-        fillColor: cesiumColor(T.text.primary),
-        outlineColor: cesiumColor(T.bg.card),
-        outlineWidth: 2,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(0, -(size / 2 + 16)),
-        showBackground: true,
-        backgroundColor: cesiumColor(T.bg.card, 0.9),
-        backgroundPadding: new Cesium.Cartesian2(6, 3),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        translucencyByDistance: new Cesium.NearFarScalar(3000, 1, 30000, 0.15),
-      } : undefined}
+      label={undefined}
     />
   );
 }
@@ -603,20 +604,30 @@ function geometryPolygon(signal, fallback) {
   return fallback;
 }
 
+/* SourceMarker — the small always-visible dot at a signal's exact location,
+   rendered as part of every agent's rich zone visualization. `point` and
+   `ellipse` graphics (unlike `polygon`/`polyline`, which carry their own
+   absolute coordinates) are positioned from the owning Entity's `position`
+   property — nesting inside a positioned parent does NOT inherit it. Both
+   graphics below now get their own explicit position for that reason. */
 function SourceMarker({ signal, color, triggered, onClick }) {
+  const pos = positionOf(signal.location, 20);
   return (
-    <Entity position={positionOf(signal.location, 20)} onClick={() => onClick(signal)}>
+    <Entity onClick={() => onClick(signal)}>
       <Entity
+        position={pos}
         point={{
           pixelSize: triggered ? 13 : 9,
           color: cesiumColor(color, 1),
           outlineColor: Cesium.Color.WHITE,
           outlineWidth: 2,
           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         }}
       />
       {triggered && (
         <Entity
+          position={pos}
           ellipse={{
             semiMajorAxis: radius(signal, 0.16),
             semiMinorAxis: radius(signal, 0.16),
@@ -732,8 +743,8 @@ function MetroVisual({ signal, triggered, onClick }) {
 
   return (
     <Entity name={`METRO — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity ellipse={{ semiMajorAxis: stationRadius, semiMinorAxis: stationRadius, height: 8, material: cesiumColor(COLORS.metro, 0.12), outline: true, outlineColor: cesiumColor(COLORS.metro, 0.85), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity ellipse={{ semiMajorAxis: stationRadius * 0.55, semiMinorAxis: stationRadius * 0.55, height: 12, material: cesiumColor("#6F35FF", 0.18), outline: true, outlineColor: cesiumColor(COLORS.metro, 0.55), outlineWidth: 2 }} />
+      <Entity position={positionOf(signal.location, 8)} ellipse={{ semiMajorAxis: stationRadius, semiMinorAxis: stationRadius, height: 8, material: cesiumColor(COLORS.metro, 0.12), outline: true, outlineColor: cesiumColor(COLORS.metro, 0.85), outlineWidth: triggered ? 5 : 2 }} />
+      <Entity position={positionOf(signal.location, 12)} ellipse={{ semiMajorAxis: stationRadius * 0.55, semiMinorAxis: stationRadius * 0.55, height: 12, material: cesiumColor("#6F35FF", 0.18), outline: true, outlineColor: cesiumColor(COLORS.metro, 0.55), outlineWidth: 2 }} />
       <SourceMarker signal={signal} color={COLORS.metro} triggered={triggered} onClick={onClick} />
       <Entity position={positionOf(signal.location, 35)} label={{ text: `METRO  ${crowd}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#27104A", 0.88) }} />
     </Entity>
@@ -797,8 +808,8 @@ function HospitalVisual({ signal, triggered, onClick }) {
 
   return (
     <Entity name={`HOSPITAL — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity ellipse={{ semiMajorAxis: outerRadius, semiMinorAxis: outerRadius, height: 9, material: cesiumColor(COLORS.hospital, 0.09), outline: true, outlineColor: cesiumColor(COLORS.hospital, 0.8), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity ellipse={{ semiMajorAxis: outerRadius * 0.58, semiMinorAxis: outerRadius * 0.58, height: 14, material: cesiumColor("#FF164E", 0.18), outline: true, outlineColor: cesiumColor("#FF4B77", 0.7), outlineWidth: 2 }} />
+      <Entity position={positionOf(signal.location, 9)} ellipse={{ semiMajorAxis: outerRadius, semiMinorAxis: outerRadius, height: 9, material: cesiumColor(COLORS.hospital, 0.09), outline: true, outlineColor: cesiumColor(COLORS.hospital, 0.8), outlineWidth: triggered ? 5 : 2 }} />
+      <Entity position={positionOf(signal.location, 14)} ellipse={{ semiMajorAxis: outerRadius * 0.58, semiMinorAxis: outerRadius * 0.58, height: 14, material: cesiumColor("#FF164E", 0.18), outline: true, outlineColor: cesiumColor("#FF4B77", 0.7), outlineWidth: 2 }} />
       <SourceMarker signal={signal} color={COLORS.hospital} triggered={triggered} onClick={onClick} />
       <Entity position={positionOf(signal.location, 35)} label={{ text: `ICU  ${occupancy}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#500018", 0.9) }} />
     </Entity>
@@ -812,8 +823,8 @@ function EmergencyVisual({ signal, triggered, onClick }) {
 
   return (
     <Entity name={`112 DISPATCH — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity ellipse={{ semiMajorAxis: radius(signal, scale), semiMinorAxis: radius(signal, scale), height: 7, material: cesiumColor(COLORS.emergency, 0.10), outline: true, outlineColor: cesiumColor(COLORS.emergency, 0.85), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity ellipse={{ semiMajorAxis: radius(signal, scale * 0.5), semiMinorAxis: radius(signal, scale * 0.5), height: 12, material: cesiumColor("#FF1744", 0.19), outline: true, outlineColor: cesiumColor("#FF1744", 0.65), outlineWidth: 2 }} />
+      <Entity position={positionOf(signal.location, 7)} ellipse={{ semiMajorAxis: radius(signal, scale), semiMinorAxis: radius(signal, scale), height: 7, material: cesiumColor(COLORS.emergency, 0.10), outline: true, outlineColor: cesiumColor(COLORS.emergency, 0.85), outlineWidth: triggered ? 5 : 2 }} />
+      <Entity position={positionOf(signal.location, 12)} ellipse={{ semiMajorAxis: radius(signal, scale * 0.5), semiMinorAxis: radius(signal, scale * 0.5), height: 12, material: cesiumColor("#FF1744", 0.19), outline: true, outlineColor: cesiumColor("#FF1744", 0.65), outlineWidth: 2 }} />
       <SourceMarker signal={signal} color={COLORS.emergency} triggered={triggered} onClick={onClick} />
       <Entity position={positionOf(signal.location, 35)} label={{ text: `112  ${metrics.callVolumePerMin ?? "—"}/MIN`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#560010", 0.9) }} />
     </Entity>
@@ -956,6 +967,7 @@ export default function CityMap() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
   const [selectedSignal, setSelectedSignal] = useState(null);
+  const location = useLocation();
 
   const clusterDsRef = useRef(null);
   const clusterHandlerRef = useRef(null);
@@ -968,7 +980,17 @@ export default function CityMap() {
   /* ---------------------------------------------------------------------- */
   /* Cesium setup                                                            */
   /* ---------------------------------------------------------------------- */
-
+  const anomalySignals = useMemo(
+    () =>
+      (allSignals || []).filter(
+        (signal) =>
+          signal.anomalyLevel !== "nominal" &&
+          signal?.location &&
+          typeof signal.location.lat === "number" &&
+          typeof signal.location.lng === "number"
+      ),
+    [allSignals]
+  );
   useEffect(() => {
     if (!cesiumViewer) return;
 
@@ -1002,7 +1024,8 @@ export default function CityMap() {
         controller.enableZoom = true;
         controller.enableTilt = true;
         controller.enableLook = true;
-
+        controller.minimumZoomDistance = 800;
+        controller.maximumZoomDistance = 120000;
         setReady(true);
         flyTo("delhi", cesiumViewer, 0);
       } catch (err) {
@@ -1032,6 +1055,33 @@ export default function CityMap() {
     return () => cancelAnimationFrame(rafId);
   }, [cesiumViewer, ready, cascade]);
 
+  /* ---------------------------------------------------------------------- */
+  /* Focus-on-navigate — Dashboard's "View on Map" button sends the target  */
+  /* sector via router state; fly there and open its worst signal's drawer  */
+  /* if one exists, so the sector isn't just centered but also explained.   */
+  /* ---------------------------------------------------------------------- */
+
+  useEffect(() => {
+    if (!ready || !cesiumViewer) return;
+    const focusSectorId = location.state?.focusSectorId;
+    if (!focusSectorId) return;
+
+    const sector = SECTOR_BY_ID[focusSectorId];
+    if (!sector) return;
+
+    cesiumViewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(sector.lng, sector.lat, 2200),
+      orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-55), roll: 0 },
+      duration: 2,
+    });
+
+    const sectorSignal = anomalySignals.find((s) => s.sectorId === focusSectorId) || null;
+    if (sectorSignal) setSelectedSignal(sectorSignal);
+
+    // consume the nav state so re-rendering (e.g. clearing the drawer)
+    // doesn't keep re-triggering the fly-to
+    window.history.replaceState({}, document.title);
+  }, [ready, cesiumViewer, location.state, anomalySignals]);
   /* ---------------------------------------------------------------------- */
   /* Clustering — nearby anomaly badges collapse into one numbered sprite;   */
   /* clicking it flies the camera in until Cesium naturally un-clusters and  */
@@ -1110,17 +1160,7 @@ export default function CityMap() {
   /* already shows the full mesh is alive.                                  */
   /* ---------------------------------------------------------------------- */
 
-  const anomalySignals = useMemo(
-    () =>
-      (allSignals || []).filter(
-        (signal) =>
-          signal.anomalyLevel !== "nominal" &&
-          signal?.location &&
-          typeof signal.location.lat === "number" &&
-          typeof signal.location.lng === "number"
-      ),
-    [allSignals]
-  );
+
 
   const sectorEntries = useMemo(() => Object.entries(sectorHealth || {}), [sectorHealth]);
 
@@ -1237,21 +1277,6 @@ export default function CityMap() {
         ))}
       </div>
 
-      {/* Map status */}
-      <div className="absolute top-4 right-4 z-10 px-3 py-2" style={{ background: T.bg.card, border: `1px solid ${T.border.default}`, minWidth: 150 }}>
-        <div className="text-[8px] tracking-[0.2em] uppercase" style={{ color: T.text.micro }}>39-SECTOR MESH</div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-[20px] font-bold" style={{ color: T.text.primary }}>{networkStats?.signalCount ?? 0}</span>
-          <span className="text-[9px]" style={{ color: T.text.muted }}>signals</span>
-        </div>
-        <div className="flex items-center gap-3 text-[9px] mt-1" style={{ color: T.text.secondary }}>
-          {networkStats?.criticalCount > 0 && <span style={{ color: T.severity.critical.bg }}>● {networkStats.criticalCount} CRIT</span>}
-          {networkStats?.warningCount > 0 && <span style={{ color: T.severity.moderate.text }}>● {networkStats.warningCount} WARN</span>}
-        </div>
-        <div className="text-[8px] tracking-widest uppercase mt-1" style={{ color: T.text.micro }}>
-          {networkStats?.liveAnchorCount ?? 0} LIVE · {(networkStats?.signalCount ?? 0) - (networkStats?.liveAnchorCount ?? 0)} SIMULATED
-        </div>
-      </div>
 
       {/* Cascade banner */}
       {cascade && (
@@ -1267,22 +1292,19 @@ export default function CityMap() {
       )}
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 z-10 px-4 py-3" style={{ background: T.bg.card, border: `1px solid ${T.border.default}` }}>
-        <div className="text-[8px] tracking-[0.2em] uppercase mb-2" style={{ color: T.text.micro }}>AGENT SIGNAL TYPES</div>
-        <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 mb-2">
-          {Object.entries(AGENT_META).map(([agentId, meta]) => (
-            <div key={agentId} className="flex items-center gap-1.5">
-              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px]" style={{ border: `1.5px solid ${AGENT_COLOR[agentId]}`, color: AGENT_COLOR[agentId] }}>
-                {AGENT_GLYPH[agentId]}
-              </span>
-              <span className="text-[7px] tracking-wide" style={{ color: T.text.secondary }}>{meta.label.toUpperCase()}</span>
-            </div>
-          ))}
-        </div>
-        <div className="text-[7px] tracking-wide pt-2" style={{ color: T.text.muted, borderTop: `1px solid ${T.border.subtle}` }}>
-          hexagon = sector boundary · click a pin to open its detail zone (road = line, water = polygon, power = spokes) · click again or close the panel to go back to a pin · pulsing dark red = active cascade
-        </div>
+      <div className="absolute bottom-0 left-0 z-10 px-4 py-3" style={{ background: T.bg.card, border: `1px solid ${T.border.default}`, width: 400 }}>
+  <div className="text-[8px] tracking-[0.2em] uppercase mb-2" style={{ color: T.text.micro }}>AGENT SIGNAL TYPES</div>
+  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+    {Object.entries(AGENT_META).map(([agentId, meta]) => (
+      <div key={agentId} className="flex items-center gap-1.5">
+        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px]" style={{ border: `1.5px solid ${AGENT_COLOR[agentId]}`, color: AGENT_COLOR[agentId] }}>
+          {AGENT_GLYPH[agentId]}
+        </span>
+        <span className="text-[7px] tracking-wide" style={{ color: T.text.secondary }}>{meta.label.toUpperCase()}</span>
       </div>
+    ))}
+  </div>
+</div>
 
       {/* Selected signal drawer */}
       {selectedSignal && <SignalDrawer signal={selectedSignal} cascade={cascade} onClose={handleCloseDrawer} />}

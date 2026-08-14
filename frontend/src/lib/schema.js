@@ -131,6 +131,11 @@ export const SOCKET_EVENTS = {
   CASCADE_ALERT: "cascade-alert",
   CASCADE_CLEAR: "cascade-clear",
   AGENT_COMMS: "agent-comms",
+
+  // NEW — citywide aggregated incident (fires ~every 30 min),
+  // distinct from the per-sector CASCADE_ALERT/CASCADE_CLEAR above.
+  CITY_INCIDENT: "city-incident",
+  CITY_INCIDENT_CLEAR: "city-incident-clear",
 };
 
 
@@ -152,6 +157,28 @@ export const CASCADE_WEIGHTS = {
 };
 
 export const CASCADE_THRESHOLD = 0.65;
+
+
+// ── Citywide incident schema constants (NEW) ────────────────
+//
+// Mirrors the enums in the "AutoNet Citywide Multi-Agent Cascade
+// Aggregation" JSON schema. Frontend components can import these
+// instead of hardcoding the allowed value lists.
+
+export const CITY_SEVERITY_LEVELS = ["NOMINAL", "ELEVATED", "HIGH", "CRITICAL"];
+
+// Per the schema's `rootCauseDomain` enum — deliberately a subset
+// of ALL_AGENT_IDS (the schema only allows these six as a root cause).
+export const CITY_ROOT_CAUSE_DOMAINS = [
+  "waterlogging_hydrology",
+  "smog_dispersion",
+  "thermal_stress",
+  "transit_fleet",
+  "road_corridor",
+  "power_grid",
+];
+
+export const CITY_MITIGATION_PRIORITIES = ["P1_CRITICAL", "P2_HIGH", "P3_MEDIUM"];
 
 
 // ── Deterministic jitter ────────────────────────────────────
@@ -682,6 +709,106 @@ export const MOCK_CASCADE = {
     "Advise schools to shift to indoor activity",
     "Deploy traffic police to affected corridors",
   ],
+  timestamp: new Date().toISOString(),
+};
+
+
+// ── Mock Citywide Incident (NEW) ─────────────────────────────
+//
+// Fallback for the "AutoNet Citywide Multi-Agent Cascade
+// Aggregation" schema — used when GhostnetContext can't compute
+// a real one locally (no active per-sector cascades yet) and the
+// backend's /test-city-incident endpoint isn't reachable either.
+// Matches the required top-level keys exactly:
+// incidentId, citywideSeverity, citywideCascadeScore, summary,
+// affectedAreas, rootCauseDomain, mitigationMeasures, timestamp.
+
+export const MOCK_CITY_INCIDENT = {
+  incidentId: "CITY_INCIDENT_DEMO_0001",
+  citywideSeverity: "CRITICAL",
+  citywideCascadeScore: 0.84,
+  summary:
+    "Severe monsoonal flash flooding in Central Delhi underpasses causing cross-district bus gridlock and local power transformer trips.",
+  rootCauseDomain: "waterlogging_hydrology",
+  affectedAreas: [
+    {
+      district: "Central Delhi",
+      primarySectorId: "DEL_CENTRAL_CP",
+      secondarySectors: ["DEL_CENTRAL_KB", "DEL_OLD_CHANDNI"],
+      impactedDomains: ["waterlogging_hydrology", "transit_fleet", "power_grid"],
+      affectedBy: {
+        primaryThreat: "Minto Bridge Flash Inundation & Substation Tripping",
+        description:
+          "42cm standing water at underpass halting DTC routes and causing thermal overload on local distribution transformers.",
+        metrics: {
+          waterDepthCm: 42.0,
+          busStationaryRatio: 0.78,
+          gridLoadImpactPct: 91.2,
+        },
+      },
+    },
+    {
+      district: "East Delhi",
+      primarySectorId: "DEL_EAST_LN",
+      secondarySectors: ["DEL_EAST_PV", "DEL_EAST_MV"],
+      impactedDomains: ["smog_dispersion", "social_panic", "hospital_capacity"],
+      affectedBy: {
+        primaryThreat: "Severe PM2.5 Stagnation & Panic Surge",
+        description:
+          "Stagnant smog plume (382 AQI) combined with viral social panic driving respiratory ER admissions up sharply.",
+        metrics: {
+          aqi: 382,
+          meanRoBERTaPanicScore: 0.842,
+          icuOccupancyPct: 95.2,
+        },
+      },
+    },
+  ],
+  mitigationMeasures: {
+    immediateDirectives: [
+      {
+        action: "Activate high-capacity mobile dewatering pumps at Minto Bridge underpass.",
+        targetAgency: "PWD / MCD",
+        priority: "P1_CRITICAL",
+      },
+      {
+        action: "Deploy additional traffic police to unsignaled junctions during power outage.",
+        targetAgency: "Delhi Traffic Police",
+        priority: "P1_CRITICAL",
+      },
+      {
+        action: "Pre-position ambulances near LNJP Hospital for respiratory overflow.",
+        targetAgency: "CATS Ambulance / Delhi Health Dept.",
+        priority: "P2_HIGH",
+      },
+    ],
+    trafficAndTransitRerouting: [
+      {
+        affectedCorridor: "Connaught Place Radial Roads & Minto Road",
+        bypassRoute: "DDU Marg -> Deen Dayal Upadhyaya flyover bypass",
+        transitAdjustment: "DTC Line 419 diverted via Barakhamba Road to avoid Minto underpass.",
+      },
+      {
+        affectedCorridor: "Vikas Marg & Laxmi Nagar Metro Corridor",
+        bypassRoute: "Nirman Vihar flyover alternate route",
+        transitAdjustment: "Bus services rerouted away from low-visibility smog corridor.",
+      },
+    ],
+    publicAdvisories: [
+      {
+        channel: "Delhi Traffic Police Twitter / RSS & FM Broadcast",
+        headline: "AVOID Minto Bridge Underpass & Outer Circle CP",
+        message:
+          "Severe waterlogging at Minto Bridge. Use DDU Marg or Barakhamba Road for East-West movement.",
+      },
+      {
+        channel: "DPCC Public Health Advisory",
+        headline: "Severe Air Quality — East Delhi",
+        message:
+          "AQI at severe levels near Laxmi Nagar. Sensitive groups advised to remain indoors.",
+      },
+    ],
+  },
   timestamp: new Date().toISOString(),
 };
 

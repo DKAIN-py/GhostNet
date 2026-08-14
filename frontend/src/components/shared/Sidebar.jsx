@@ -44,49 +44,6 @@ export default function Sidebar() {
           ))}
         </nav>
       </div>
-
-      <div className="hidden lg:block px-4">
-        <p className="text-[9px] tracking-[0.2em] mb-3 uppercase" style={{ color: T.text.micro }}>
-          AGENTS · {ALL_AGENT_IDS.length}
-        </p>
-        <div className="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">
-          {ALL_AGENT_IDS.map((id) => {
-            const meta = AGENT_META[id];
-            return (
-              <div key={id} className="flex flex-col px-3 py-1.5" style={{ border: `1px solid ${T.border.subtle}` }}>
-                <span className="text-[9px] tracking-widest uppercase" style={{ color: T.text.secondary }}>
-                  {meta?.label ?? id}
-                </span>
-                <span className="text-[8px] tracking-wider mt-0.5" style={{ color: T.text.micro }}>
-                  /{meta?.domain}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-auto px-2 lg:px-4 pt-4" style={{ borderTop: `1px solid ${T.border.subtle}` }}>
-        <div className="hidden lg:flex flex-col gap-0.5">
-          <p className="text-[9px] tracking-widest uppercase" style={{ color: T.text.micro }}>
-            39 SECTORS · {ALL_AGENT_IDS.length} AGENTS
-          </p>
-          <p
-            className="text-[9px]"
-            style={{ color: networkStats?.criticalCount > 0 ? T.severity.critical.bg : T.text.micro }}
-          >
-            {networkStats?.criticalCount ?? 0} critical · {networkStats?.warningCount ?? 0} warning
-          </p>
-        </div>
-        <div className="lg:hidden flex flex-col items-center gap-1" title={`${networkStats?.criticalCount ?? 0} critical signals`}>
-          <span
-            className="text-[10px] font-bold"
-            style={{ color: networkStats?.criticalCount > 0 ? T.severity.critical.bg : T.text.muted }}
-          >
-            {networkStats?.criticalCount ?? 0}
-          </span>
-        </div>
-      </div>
     </aside>
   );
 }

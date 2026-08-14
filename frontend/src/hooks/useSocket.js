@@ -21,12 +21,16 @@ const SOCKET_URL =
  * cascade-alert
  * cascade-clear
  * agent-comms
+ * city-incident        (NEW — citywide aggregated cascade, ~every 30 min)
+ * city-incident-clear  (NEW)
  */
 export function useSocket(
   onSignal,
   onCascade,
   onCascadeClear,
-  onAgentComms
+  onAgentComms,
+  onCityIncident,
+  onCityIncidentClear
 ) {
   const socketRef = useRef(null);
 
@@ -124,7 +128,7 @@ export function useSocket(
     );
 
     // ==========================================================
-    // CASCADE ALERT
+    // CASCADE ALERT (per-sector, up to 39 concurrent)
     // ==========================================================
 
     socket.on(
@@ -183,6 +187,42 @@ export function useSocket(
     );
 
     // ==========================================================
+    // CITY INCIDENT (NEW)
+    //
+    // Single citywide aggregated cascade, per the
+    // AutoNet Citywide Multi-Agent Cascade Aggregation schema —
+    // fired by the backend roughly every 30 minutes, distinct
+    // from the per-sector cascade-alert events above.
+    // ==========================================================
+
+    socket.on(
+      SOCKET_EVENTS.CITY_INCIDENT,
+      (data) => {
+        console.warn(
+          '[GHOSTNET] CITY INCIDENT:',
+          data
+        );
+
+        onCityIncident?.(data);
+      }
+    );
+
+    // ==========================================================
+    // CITY INCIDENT CLEAR (NEW)
+    // ==========================================================
+
+    socket.on(
+      SOCKET_EVENTS.CITY_INCIDENT_CLEAR,
+      () => {
+        console.log(
+          '[GHOSTNET] City incident cleared'
+        );
+
+        onCityIncidentClear?.();
+      }
+    );
+
+    // ==========================================================
     // CLEANUP
     // ==========================================================
 
@@ -202,6 +242,8 @@ export function useSocket(
     onCascade,
     onCascadeClear,
     onAgentComms,
+    onCityIncident,
+    onCityIncidentClear,
   ]);
 
   return {

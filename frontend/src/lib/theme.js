@@ -1,4 +1,4 @@
-// GHOSTNET — Engineering Journal Theme (Variant 03)
+// GHOSTNET — Engineering Journal Theme (Variant 04)
 // Single source of truth. Never hardcode colors elsewhere.
 
 export const THEMES = {
@@ -20,19 +20,48 @@ export const THEMES = {
       muted:     '#8C8575',
       micro:     '#A39C8D',
     },
+
+    // Spot-color accents — sparing use for interactive states
+    // (active nav, links, focus rings, small badges). Keeps the
+    // paper-and-ink base from going fully grayscale everywhere.
+    accent: {
+      amber:  '#B8862E',
+      rust:   '#A6522E',
+      teal:   '#2E6B66',
+      indigo: '#3E4E8A',
+    },
+
+    // Per-domain colors — matches AGENT_META's four domains
+    // (environment / transit / infrastructure / civic), so agent
+    // badges, legends, and filters share one palette instead of
+    // each new component inventing its own hex values.
+    domain: {
+      environment:    '#4E7A4A',
+      transit:        '#B8862E',
+      infrastructure: '#7A5A3E',
+      civic:          '#5E4A8A',
+    },
+
     severity: {
-      good:     { text: '#5C574C',  border: '#4A463D'            },
-      moderate: { text: '#2B2822',  border: '#1A1815'            },
-      critical: { text: '#FCFAF5',  bg: '#2B2822', border: '#2B2822' },
+      good:     { text: '#3F6B4A', bg: '#E7F0E2', border: '#4E8B5C' },
+      moderate: { text: '#8A5A1E', bg: '#F5E7C9', border: '#C6862E' },
+      critical: { text: '#FCEDE8', bg: '#8C2C22', border: '#6B1F18' },
     },
+
     cascade: {
-      bg:     '#2B2822',
-      text:   '#FCFAF5',
-      border: '#2B2822',
+      bg:     '#3A2420',
+      text:   '#FCEDE8',
+      border: '#6B1F18',
     },
+
+    // Ordered chart palette — for sparklines / multi-series charts,
+    // so line colors stay consistent with the rest of the theme
+    // instead of a charting library's default rainbow.
+    chart: ['#B8862E', '#4E8B5C', '#8C2C22', '#3E4E8A', '#2E6B66', '#A6522E'],
+
     font: {
-      mono: "'JetBrains Mono', 'Fira Code', monospace",
-      sans: "'SF Pro Display', 'Inter', sans-serif",
+      mono: "'Quantico', sans-serif",
+      sans: "'Instrument Serif', serif",
     },
   },
 };
@@ -46,48 +75,7 @@ export function getSeverityStyle(severity) {
     default:         return T.severity.good;
   }
 }
-// export const THEMES = {
-//   monochrome: {
-//     bg: {
-//       root:    '#EAEAEA',
-//       card:    '#FFFFFF',
-//       surface: '#F3F3F3',
-//       hover:   '#E0E0E0',
-//     },
-//     border: {
-//       default: '#111111',
-//       strong:  '#000000',
-//       subtle:  '#CCCCCC',
-//     },
-//     text: {
-//       primary:   '#111111',
-//       secondary: '#444444',
-//       muted:     '#777777',
-//       micro:     '#999999',
-//     },
-//     severity: {
-//       good:     { text: '#444444', border: '#111111' },
-//       moderate: { text: '#111111', border: '#000000' },
-//       critical: { text: '#FFFFFF', bg: '#000000', border: '#000000' }, // Inverts to absolute solid dark ink blocks
-//     },
-//     cascade: {
-//       bg:     '#000000',
-//       text:   '#FFFFFF',
-//       border: '#000000',
-//     },
-//     font: {
-//       mono: "'JetBrains Mono', 'Fira Code', monospace",
-//       sans: "'SF Pro Display', 'Inter', sans-serif",
-//     },
-//   },
-// };
 
-// export const T = THEMES.monochrome;
-
-// export function getSeverityStyle(severity) {
-//   switch (severity?.toLowerCase()) {
-//     case 'critical': return T.severity.critical;
-//     case 'moderate': return T.severity.moderate;
-//     default:         return T.severity.good;
-//   }
-// }
+export function getDomainColor(domain) {
+  return T.domain[domain] || T.text.secondary;
+}

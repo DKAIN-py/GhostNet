@@ -1,409 +1,216 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useGhostnet } from '../context/GhostnetContext';
+import { SECTOR_IDS, SECTOR_BY_ID, distanceBetween, nearestSectors } from '../lib/sectors';
 import { T } from '../lib/theme';
 
-// ─── Canvas ───────────────────────────────────────────────────────────────────
-const W = 880, H = 620;
+// ─────────────────────────────────────────────────────────
+// GHOSTNET NERVOUS SYSTEM — SVG rewrite
+//
+// Why SVG instead of canvas: with 39 real geo-coordinates,
+// several sectors sit within a few hundred meters of each
+// other (Old Delhi, Central Delhi). Canvas text at that density
+// goes blurry and labels stack on top of each other. SVG is
+// vector — crisp at any zoom — and lets the browser's own
+// animation/hit-testing engine do the heavy lifting instead of
+// a hand-rolled requestAnimationFrame loop.
+// ─────────────────────────────────────────────────────────
 
-// ─── Node definitions — larger, more dramatic layout ─────────────────────────
-const NODES = {
-  cascade:  { id: 'cascade',   x: 440, y: 290, r: 58,  label: 'CASCADE',   sub: 'meta-agent',  color: '#FCFAF5', accent: '#FF4444', ring: '#FF4444' },
-  air:      { id: 'air',       x: 140, y: 180, r: 42,  label: 'AIR',       sub: 'OpenAQ',      color: '#5B8FE8', accent: '#5B8FE8', ring: '#5B8FE8' },
-  transport:{ id: 'transport', x: 740, y: 180, r: 42,  label: 'TRANSPORT', sub: 'TomTom',      color: '#F0A830', accent: '#F0A830', ring: '#F0A830' },
-  sentiment:{ id: 'sentiment', x: 440, y: 500, r: 42,  label: 'SENTIMENT', sub: 'Twitter/X',   color: '#C85DC8', accent: '#C85DC8', ring: '#C85DC8' },
-  delhi:    { id: 'delhi',     x: 440, y:  70, r: 26,  label: 'DELHI',     sub: 'city node',   color: '#A39C8D', accent: '#A39C8D', ring: '#A39C8D' },
-  alert:    { id: 'alert',     x: 440, y: 580, r: 18,  label: 'ALERT',     sub: 'output',      color: '#FF4444', accent: '#FF4444', ring: '#FF4444' },
-};
+const W = 1320, H = 860;
 
-const EDGES = [
-  { from: 'air',      to: 'cascade',   id: 'e1', color: '#5B8FE8' },
-  { from: 'transport',to: 'cascade',   id: 'e2', color: '#F0A830' },
-  { from: 'sentiment',to: 'cascade',   id: 'e3', color: '#C85DC8' },
-  { from: 'delhi',    to: 'air',       id: 'e4', color: '#7A7268' },
-  { from: 'delhi',    to: 'transport', id: 'e5', color: '#7A7268' },
-  { from: 'delhi',    to: 'sentiment', id: 'e6', color: '#7A7268' },
-  { from: 'cascade',  to: 'alert',     id: 'e7', color: '#FF4444' },
+const STATUS_COLOR = { critical: '#FF4444', warning: '#F0A830', normal: '#8C8575' };
+
+function sectorStatus(health) {
+  if (!health) return 'normal';
+  if (health.criticalCount > 0) return 'critical';
+  if (health.warningCount > 0) return 'warning';
+  return 'normal';
+}
+function agentStatusColor(level) {
+  if (level === 'critical') return '#FF4444';
+  if (level === 'warning' || level === 'moderate') return '#F0A830';
+  return '#8C8575';
+}
+function labelize(id) { return (id || '').replace(/_/g, ' '); }
+
+function hexPoints(cx, cy, r) {
+  return Array.from({ length: 6 }, (_, i) => {
+    const a = (Math.PI / 3) * i - Math.PI / 6;
+    return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`;
+  }).join(' ');
+}
+
+function edgePathD(a, b, curve = 20) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const nx = -dy / len, ny = dx / len;
+  const cx = mx + nx * curve, cy = my + ny * curve;
+  return `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
+}
+
+// ── District-grid layout ─────────────────────────────────────
+// Real lat/lng puts several districts (Old Delhi, Central Delhi,
+// East Delhi) only 2-3km apart, so any geographic projection —
+// even with a declutter pass — keeps fighting itself to avoid
+// overlap. Simpler and clearer: give every district its own open
+// cell in a grid, roughly compass-ordered so the map still "feels"
+// like Delhi, and lay its sectors out evenly spaced inside that
+// cell. Guarantees zero overlap, no clamping, nothing fighting
+// for space — just open (khula) room for every name.
+const DISTRICT_GRID = [
+  ['Outer North Delhi', 'North West Delhi', 'Central North Delhi', 'North East Delhi'],
+  ['West Delhi',         'North Delhi',      'Old Delhi',           'East Delhi'],
+  ['South West Delhi',   'New Delhi',        'Central Delhi',       'South East Delhi'],
+  [null,                 'South Delhi',       null,                  null],
 ];
 
-const AGENT_MAP  = { air_quality: 'air', transport: 'transport', sentiment: 'sentiment' };
-const AGENT_EDGE = { air: 'e1', transport: 'e2', sentiment: 'e3' };
-const DELHI_EDGE = { air: 'e4', transport: 'e5', sentiment: 'e6' };
+function computeLayout() {
+  const cols = DISTRICT_GRID[0].length;
+  const rows = DISTRICT_GRID.length;
+  const marginX = 60, marginY = 60;
+  const cellW = (W - marginX * 2) / cols;
+  const cellH = (H - marginY * 2) / rows;
 
-// ─── Bezier helpers ───────────────────────────────────────────────────────────
-function getEdgePath(edge) {
-  const A = NODES[edge.from], B = NODES[edge.to];
-  const dx = B.x - A.x, dy = B.y - A.y;
-  const len = Math.hypot(dx, dy);
-  const ux = dx / len, uy = dy / len;
-  // perpendicular control point — curves outward
-  const perp = edge.id === 'e7' ? 0 : 0.22;
-  const cx = (A.x + B.x) / 2 - uy * len * perp;
-  const cy = (A.y + B.y) / 2 + ux * len * perp;
+  const byDistrict = {};
+  SECTOR_IDS.forEach((id) => {
+    const d = SECTOR_BY_ID[id].district;
+    (byDistrict[d] ||= []).push(id);
+  });
+
+  const pts = {};
+  const districtCenters = {};
+  const districtBounds = {};
+  const CELL_INSET = 14;
+
+  DISTRICT_GRID.forEach((row, rIdx) => {
+    row.forEach((district, cIdx) => {
+      if (!district) return;
+      const cellX = marginX + cellW * cIdx;
+      const cellY = marginY + cellH * rIdx;
+      const cx = cellX + cellW / 2;
+
+      districtCenters[district] = { x: cx, y: cellY + 24 };
+      districtBounds[district] = {
+        x: cellX + CELL_INSET,
+        y: cellY + CELL_INSET,
+        width: cellW - CELL_INSET * 2,
+        height: cellH - CELL_INSET * 2,
+      };
+
+      const ids = (byDistrict[district] || []).slice().sort();
+      const n = ids.length || 1;
+      const rowY = cellY + cellH * 0.62;
+      const spread = cellW * 0.6;
+      ids.forEach((id, i) => {
+        const t = ids.length === 1 ? 0.5 : i / (n - 1);
+        pts[id] = { x: cx - spread / 2 + spread * t, y: rowY };
+      });
+    });
+  });
+
+  return { pts, districtCenters, districtBounds };
+}
+
+function getNearest(sectorId, n = 3) {
+  return nearestSectors(sectorId, n).map((id) => ({ id, distanceKm: distanceBetween(sectorId, id) }));
+}
+
+// ── Label placement that stays inside the frame ─────────────
+function clampLabel(x, y, w, h) {
   return {
-    x1: A.x + ux * A.r, y1: A.y + uy * A.r,
-    cx, cy,
-    x2: B.x - ux * B.r, y2: B.y - uy * B.r,
+    x: Math.min(Math.max(x, w / 2 + 6), W - w / 2 - 6),
+    y: Math.min(Math.max(y, h + 6), H - 6),
   };
 }
 
-function bezPt(x1, y1, cx, cy, x2, y2, t) {
-  const m = 1 - t;
-  return { x: m*m*x1 + 2*m*t*cx + t*t*x2, y: m*m*y1 + 2*m*t*cy + t*t*y2 };
-}
-
-// ─── Hex path helper ──────────────────────────────────────────────────────────
-function hexPath(ctx, x, y, r) {
-  ctx.beginPath();
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i - Math.PI / 6;
-    const px = x + r * Math.cos(a), py = y + r * Math.sin(a);
-    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export default function NervousSystem() {
-  const { signals, cascade, feed } = useGhostnet();
-  const canvasRef    = useRef(null);
-  const animRef      = useRef(null);
-  const pulses       = useRef([]);
-  const prevFeedLen  = useRef(feed.length);
-  const [hovered, setHovered]   = useState(null);
-  const [selected, setSelected] = useState(null);
+  const { sectors, sectorHealth, allSignals, networkStats, cascades, feed } = useGhostnet();
 
-  // ── Spawn pulses on new signal ────────────────────────────────────────────
+  const { pts: layout, districtCenters, districtBounds } = useMemo(computeLayout, []);
+  const districtLabels = useMemo(
+    () => Object.entries(districtCenters).map(([district, p]) => ({ district, x: p.x, y: p.y })),
+    [districtCenters]
+  );
+  const districtBoxes = useMemo(
+    () => Object.entries(districtBounds).map(([district, b]) => ({ district, ...b })),
+    [districtBounds]
+  );
+
+  const [hoveredSector, setHoveredSector] = useState(null);
+  const [selectedSector, setSelectedSector] = useState(null);
+  const [selectedAgentId, setSelectedAgentId] = useState(null);
+  const [hoveredAgent, setHoveredAgent] = useState(null); // agentId within focused sector
+  const [pings, setPings] = useState([]);
+  const prevTopKeyRef = useRef(null);
+
   useEffect(() => {
-    if (feed.length > prevFeedLen.current) {
-      const latest = feed[0];
-      const nid = AGENT_MAP[latest?.agentId];
-      if (nid) {
-        const col = NODES[nid].color;
-        pulses.current.push({ edgeId: AGENT_EDGE[nid], t: 0, color: col, speed: 0.010, size: latest.anomalyLevel === 'critical' ? 7 : 5 });
-        pulses.current.push({ edgeId: DELHI_EDGE[nid], t: 0, color: '#8C8575', speed: 0.014, size: 3, rev: true });
+    // feed is capped at 50 in context (slice(0,50)), so comparing
+    // feed.length permanently breaks once the mesh passes 50 signals —
+    // comparing the newest item's identity instead keeps this working
+    // indefinitely, no matter how long the app has been running.
+    const latest = feed[0];
+    const latestKey = latest ? `${latest.sectorId}:${latest.agentId}:${latest.timestamp}` : null;
+
+    if (latestKey && latestKey !== prevTopKeyRef.current) {
+      if (latest?.sectorId && layout[latest.sectorId]) {
+        const id = `${latest.sectorId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        setPings((p) => [...p, { id, sectorId: latest.sectorId, critical: latest.anomalyLevel === 'critical' }]);
+        setTimeout(() => setPings((p) => p.filter((x) => x.id !== id)), 1000);
       }
     }
-    prevFeedLen.current = feed.length;
-  }, [feed]);
+    prevTopKeyRef.current = latestKey;
+  }, [feed, layout]);
 
-  // ── Spawn cascade burst ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (cascade) {
-      for (let wave = 0; wave < 5; wave++) {
-        setTimeout(() => {
-          ['e1','e2','e3'].forEach(eid =>
-            pulses.current.push({ edgeId: eid, t: 0, color: '#FF4444', speed: 0.012, size: 6 })
-          );
-          pulses.current.push({ edgeId: 'e7', t: 0, color: '#FF4444', speed: 0.020, size: 7 });
-        }, wave * 250);
-      }
-    }
-  }, [cascade]);
+  const focusedSectorId = hoveredSector || selectedSector;
+  // Deliberately separate from focusedSectorId: the agent ring and the
+  // nearest-neighbor mesh lines are geometry that can physically extend
+  // over a neighboring sector's hex. If that geometry appeared on mere
+  // hover, hovering sector B while sector A was still "focused" would put
+  // A's spokes on top of B (rendered in a later, higher layer), stealing
+  // B's click and forcing you to click repeatedly to actually land on it.
+  // Keeping expansion tied to an explicit click (selectedSector) means
+  // hovering only ever shows a small tooltip anchored on the hovered node
+  // itself — nothing that can cover a neighbor.
+  const expandedSectorId = selectedSector;
+  const focusedAgents = expandedSectorId ? Object.values(sectors[expandedSectorId] || {}).filter(Boolean) : [];
 
-  // ── Draw loop ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+  const selHealth = selectedSector ? sectorHealth[selectedSector] : null;
+  const selSector = selectedSector ? SECTOR_BY_ID[selectedSector] : null;
+  const selAgents = selectedSector
+    ? Object.values(sectors[selectedSector] || {}).filter(Boolean).sort((a, b) => (a.healthScore ?? 100) - (b.healthScore ?? 100))
+    : [];
+  const selAgent = selAgents.find((a) => a.agentId === selectedAgentId) || null;
+  const selNearest = selectedSector ? getNearest(selectedSector, 3) : [];
+  const selCascade = (cascades || []).find(
+    (c) => c.primarySectorId === selectedSector || (c.spatialSpread || []).includes(selectedSector)
+  );
 
-    function drawHex(x, y, r, fillColor, strokeColor, lineWidth = 1.5, alpha = 1) {
-      ctx.globalAlpha = alpha;
-      hexPath(ctx, x, y, r);
-      ctx.fillStyle = fillColor;
-      ctx.fill();
-      hexPath(ctx, x, y, r);
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = lineWidth;
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
+  const totalSectors = SECTOR_IDS.length;
+  const sectorsAtRisk = Object.values(sectorHealth).filter((h) => h.criticalCount > 0 || h.warningCount > 0).length;
 
-    function draw(ts) {
-      ctx.clearRect(0, 0, W, H);
+  const topCritical = useMemo(
+    () => allSignals.filter((s) => s.anomalyLevel === 'critical').sort((a, b) => (a.healthScore ?? 100) - (b.healthScore ?? 100)).slice(0, 8),
+    [allSignals]
+  );
 
-      // ── BG ──────────────────────────────────────────────────────────────
-      ctx.fillStyle = T.bg.root;
-      ctx.fillRect(0, 0, W, H);
-
-      // Engineering grid — fine
-      ctx.strokeStyle = 'rgba(74,70,61,0.045)';
-      ctx.lineWidth = 0.5;
-      for (let x = 0; x <= W; x += 28) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-      for (let y = 0; y <= H; y += 28) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-
-      // Accent grid — major
-      ctx.strokeStyle = 'rgba(74,70,61,0.09)';
-      for (let x = 0; x <= W; x += 140) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-      for (let y = 0; y <= H; y += 140) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-
-      // Scanline overlay (subtle)
-      for (let y = 0; y < H; y += 4) {
-        ctx.fillStyle = 'rgba(74,70,61,0.012)';
-        ctx.fillRect(0, y, W, 1);
-      }
-
-      const isCas = !!cascade;
-
-      // ── Edges ───────────────────────────────────────────────────────────
-      EDGES.forEach(edge => {
-        const p = getEdgePath(edge);
-
-        // Wide soft glow behind
-        ctx.beginPath();
-        ctx.moveTo(p.x1, p.y1);
-        ctx.quadraticCurveTo(p.cx, p.cy, p.x2, p.y2);
-        ctx.strokeStyle = edge.color + (isCas && edge.id !== 'e7' ? '30' : '1A');
-        ctx.lineWidth = 14;
-        ctx.setLineDash([]);
-        ctx.stroke();
-
-        // Mid glow
-        ctx.beginPath();
-        ctx.moveTo(p.x1, p.y1);
-        ctx.quadraticCurveTo(p.cx, p.cy, p.x2, p.y2);
-        ctx.strokeStyle = edge.color + (isCas ? '45' : '28');
-        ctx.lineWidth = 4;
-        ctx.stroke();
-
-        // Core dashed line
-        ctx.beginPath();
-        ctx.moveTo(p.x1, p.y1);
-        ctx.quadraticCurveTo(p.cx, p.cy, p.x2, p.y2);
-        ctx.strokeStyle = edge.color + (isCas ? 'AA' : '55');
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 5]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      });
-
-      // ── Pulses ───────────────────────────────────────────────────────────
-      pulses.current = pulses.current.filter(pu => pu.t <= 1);
-      pulses.current.forEach(pulse => {
-        const edge = EDGES.find(e => e.id === pulse.edgeId);
-        if (!edge) return;
-        let { x1, y1, cx, cy, x2, y2 } = getEdgePath(edge);
-        if (pulse.rev) { [x1,x2]=[x2,x1]; [y1,y2]=[y2,y1]; }
-        const pos  = bezPt(x1,y1,cx,cy,x2,y2, pulse.t);
-        const pos0 = bezPt(x1,y1,cx,cy,x2,y2, Math.max(0, pulse.t - 0.13));
-
-        // Outer bloom
-        const grd2 = ctx.createRadialGradient(pos.x,pos.y,0,pos.x,pos.y, pulse.size * 3.5);
-        grd2.addColorStop(0, pulse.color + '55');
-        grd2.addColorStop(1, 'transparent');
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, pulse.size * 3.5, 0, Math.PI*2);
-        ctx.fillStyle = grd2;
-        ctx.fill();
-
-        // Trail
-        const grd = ctx.createLinearGradient(pos0.x,pos0.y,pos.x,pos.y);
-        grd.addColorStop(0, 'transparent');
-        grd.addColorStop(0.6, pulse.color + '55');
-        grd.addColorStop(1, pulse.color);
-        ctx.beginPath();
-        ctx.moveTo(pos0.x, pos0.y);
-        ctx.lineTo(pos.x, pos.y);
-        ctx.strokeStyle = grd;
-        ctx.lineWidth = pulse.size * 0.7;
-        ctx.stroke();
-
-        // Dot
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, pulse.size, 0, Math.PI*2);
-        ctx.fillStyle = pulse.color;
-        ctx.fill();
-        // White hot core
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, pulse.size * 0.38, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(255,255,255,0.95)';
-        ctx.fill();
-
-        pulse.t += pulse.speed;
-      });
-
-      // ── Nodes ────────────────────────────────────────────────────────────
-      Object.values(NODES).forEach(node => {
-        const agKey  = Object.keys(AGENT_MAP).find(k => AGENT_MAP[k] === node.id);
-        const sig    = agKey ? signals[agKey] : null;
-        const isCrit = sig?.anomalyLevel === 'critical';
-        const isMod  = sig?.anomalyLevel === 'moderate';
-        const isCasN = node.id === 'cascade';
-        const isHov  = hovered === node.id;
-        const isSel  = selected === node.id;
-        const pulse  = (Math.sin(ts / 800 + node.x * 0.009) + 1) / 2;
-        const pulse2 = (Math.sin(ts / 420 + node.y * 0.007) + 1) / 2;
-
-        const critActive = isCrit || (isCasN && isCas);
-
-        // ── Large ambient glow behind node ─────────────────────────────
-        if (critActive || isHov || isSel) {
-          const glowR = node.r * (critActive ? 2.8 + pulse2 * 0.6 : 2.2);
-          const grd = ctx.createRadialGradient(node.x,node.y,node.r * 0.3, node.x,node.y, glowR);
-          const glowCol = critActive ? '#FF4444' : node.color;
-          grd.addColorStop(0, glowCol + (critActive ? '28' : '18'));
-          grd.addColorStop(1, 'transparent');
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, glowR, 0, Math.PI*2);
-          ctx.fillStyle = grd;
-          ctx.fill();
-        }
-
-        // ── Outer orbiting hex ring ────────────────────────────────────
-        const orbitR = node.r + 14 + pulse * 5;
-        hexPath(ctx, node.x, node.y, orbitR);
-        ctx.strokeStyle = node.color + (critActive ? '60' : isHov ? '45' : '20');
-        ctx.lineWidth = critActive ? 1.5 : 0.8;
-        ctx.setLineDash([4, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // ── Second smaller orbit (only for main agents) ───────────────
-        if (node.r >= 40) {
-          const orbitR2 = node.r + 22 + pulse2 * 4;
-          hexPath(ctx, node.x, node.y, orbitR2);
-          ctx.strokeStyle = node.color + (critActive ? '30' : '10');
-          ctx.lineWidth = 0.5;
-          ctx.setLineDash([2, 5]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // ── Health arc (SVG-style arc outside hex) ─────────────────────
-        if (sig) {
-          const arcR = node.r + 8;
-          const pct  = (100 - sig.healthScore) / 100;
-          // Track
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, arcR, 0, Math.PI*2);
-          ctx.strokeStyle = 'rgba(74,70,61,0.10)';
-          ctx.lineWidth = 3;
-          ctx.stroke();
-          // Fill
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, arcR, -Math.PI/2, -Math.PI/2 + pct * Math.PI * 2);
-          const arcCol = isCrit ? '#FF4444' : isMod ? '#F0A830' : node.color;
-          ctx.strokeStyle = arcCol;
-          ctx.lineWidth = 3;
-          ctx.lineCap = 'round';
-          ctx.stroke();
-          ctx.lineCap = 'butt';
-        }
-
-        // ── Hex fill + stroke (main body) ─────────────────────────────
-        if (critActive) {
-          // Dark fill with colored border
-          drawHex(node.x, node.y, node.r, '#160808', '#FF4444', 2);
-        } else {
-          drawHex(node.x, node.y, node.r, T.bg.card, node.color, isSel ? 2 : 1.5);
-        }
-
-        // ── Inner hex (decorative) ─────────────────────────────────────
-        if (node.r >= 40) {
-          hexPath(ctx, node.x, node.y, node.r * 0.6);
-          ctx.strokeStyle = node.color + (critActive ? '55' : '22');
-          ctx.lineWidth = 0.7;
-          ctx.stroke();
-        }
-
-        // ── Pulsing center dot ────────────────────────────────────────
-        const dotR = node.r >= 40 ? 4 + pulse * 1.5 : 2.5 + pulse * 1;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y + (node.sub ? -8 : 0), dotR, 0, Math.PI*2);
-        ctx.fillStyle = critActive ? '#FF4444' : node.color;
-        ctx.fill();
-        // Core
-        ctx.beginPath();
-        ctx.arc(node.x, node.y + (node.sub ? -8 : 0), dotR * 0.4, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.fill();
-
-        // ── Label ─────────────────────────────────────────────────────
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        // Agent label
-        const labelY = node.sub && node.r >= 40 ? node.y + 4 : node.y;
-        ctx.font = `700 ${node.r >= 40 ? 11 : 9}px 'JetBrains Mono', monospace`;
-        ctx.fillStyle = critActive ? '#FCFAF5' : T.text.primary;
-        ctx.fillText(node.label, node.x, labelY);
-
-        if (node.sub && node.r >= 24) {
-          ctx.font = `400 8px 'JetBrains Mono', monospace`;
-          ctx.fillStyle = critActive ? 'rgba(252,250,245,0.40)' : T.text.micro;
-          ctx.fillText(node.sub, node.x, labelY + 12);
-        }
-
-        // ── Health number (top-right of node) ─────────────────────────
-        if (sig) {
-          const numCol = isCrit ? '#FF4444' : isMod ? '#F0A830' : T.text.muted;
-          ctx.font = `700 10px 'JetBrains Mono', monospace`;
-          ctx.textAlign = 'left';
-          ctx.fillStyle = numCol;
-          ctx.fillText(sig.healthScore, node.x + node.r + 5, node.y - node.r + 6);
-        }
-
-        // ── Cascade confidence ────────────────────────────────────────
-        if (isCasN && isCas) {
-          ctx.font = `700 12px 'JetBrains Mono', monospace`;
-          ctx.fillStyle = '#FF4444';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${cascade.confidence}%`, node.x, node.y + node.r + 18);
-          ctx.font = `400 8px 'JetBrains Mono', monospace`;
-          ctx.fillStyle = T.text.micro;
-          ctx.fillText('CONF', node.x, node.y + node.r + 29);
-        }
-      });
-
-      // ── Selected node highlight ring ──────────────────────────────────────
-      if (selected) {
-        const n = NODES[selected];
-        const sel2 = (Math.sin(ts / 350) + 1) / 2;
-        hexPath(ctx, n.x, n.y, n.r + 18 + sel2 * 5);
-        ctx.strokeStyle = n.color + 'AA';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-
-      animRef.current = requestAnimationFrame(draw);
-    }
-
-    animRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(animRef.current);
-  }, [signals, cascade, hovered, selected]);
-
-  // ── Hit detection ─────────────────────────────────────────────────────────
-  const getHit = useCallback((e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (W / rect.width);
-    const my = (e.clientY - rect.top)  * (H / rect.height);
-    return Object.values(NODES).find(n => Math.hypot(mx - n.x, my - n.y) < n.r + 14) ?? null;
-  }, []);
-
-  const handleMove  = useCallback(e => setHovered(getHit(e)?.id ?? null), [getHit]);
-  const handleClick = useCallback(e => {
-    const hit = getHit(e);
-    setSelected(prev => prev === hit?.id ? null : hit?.id ?? null);
-  }, [getHit]);
-
-  // ── Derived stats ─────────────────────────────────────────────────────────
-  const agentSigs = Object.values(signals).filter(Boolean);
-  const critCount = agentSigs.filter(s => s.anomalyLevel === 'critical').length;
-  const avgHealth = agentSigs.length
-    ? Math.round(agentSigs.reduce((a, s) => a + s.healthScore, 0) / agentSigs.length)
-    : 100;
-
-  const selNode  = selected ? NODES[selected] : null;
-  const selAgKey = selected ? Object.keys(AGENT_MAP).find(k => AGENT_MAP[k] === selected) : null;
-  const selSig   = selAgKey ? signals[selAgKey] : null;
+  // ── Hover label (single, no overlap since only 1 renders) ──
+  const hoverLabel = (() => {
+    const id = hoveredSector && !selectedSector ? hoveredSector : null;
+    if (!id) return null;
+    const pos = layout[id];
+    const health = sectorHealth[id];
+    const sector = SECTOR_BY_ID[id];
+    const status = sectorStatus(health);
+    const w = Math.max(110, sector.name.length * 6.4);
+    const { x, y } = clampLabel(pos.x, pos.y - 30, w, 34);
+    return { id, x, y, w, sector, health, status };
+  })();
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ fontFamily: T.font.mono, background: T.bg.root }}>
 
       {/* ══════════════════ HEADER ══════════════════════════════════════════ */}
-      <div
-        className="flex items-center justify-between px-6 py-3 flex-shrink-0"
-        style={{ borderBottom: `1px solid ${T.border.subtle}` }}
-      >
+      <div className="flex items-center justify-between px-6 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${T.border.subtle}` }}>
         <div className="flex flex-col gap-0.5">
           <div className="flex items-center gap-3">
             <span className="text-[9px] tracking-[0.35em] uppercase font-bold" style={{ color: T.text.micro }}>GHOSTNET</span>
@@ -411,22 +218,19 @@ export default function NervousSystem() {
             <span className="text-[9px] tracking-[0.35em] uppercase font-bold" style={{ color: T.text.primary }}>NERVOUS SYSTEM</span>
           </div>
           <span className="text-[9px] tracking-wider" style={{ color: T.text.micro }}>
-            live agent topology · signal propagation · cascade detection
+            39-sector topology · signal propagation · cascade detection
           </span>
         </div>
-
         <div className="flex items-center gap-6">
           {[
-            { label: 'CRITICAL',   value: `${critCount}/3`,            alert: critCount > 0  },
-            { label: 'AVG HEALTH', value: avgHealth,                    alert: avgHealth < 50 },
-            { label: 'SIGNALS',    value: feed.length,                  alert: false          },
-            { label: 'CASCADE',    value: cascade ? 'ACTIVE' : 'NONE', alert: !!cascade       },
-          ].map(s => (
+            { label: 'SECTORS AT RISK', value: `${sectorsAtRisk}/${totalSectors}`, alert: sectorsAtRisk > 0 },
+            { label: 'CRITICAL AGENTS', value: networkStats.criticalCount, alert: networkStats.criticalCount > 0 },
+            { label: 'ACTIVE SIGNALS', value: networkStats.signalCount, alert: false },
+            { label: 'ACTIVE CASCADES', value: cascades.length, alert: cascades.length > 0 },
+          ].map((s) => (
             <div key={s.label} className="flex flex-col items-end gap-0.5">
               <span className="text-[8px] tracking-[0.2em] uppercase" style={{ color: T.text.micro }}>{s.label}</span>
-              <span className="text-[14px] font-bold" style={{ color: s.alert ? '#FF4444' : T.text.primary, letterSpacing: '0.05em' }}>
-                {s.value}
-              </span>
+              <span className="text-[14px] font-bold" style={{ color: s.alert ? '#FF4444' : T.text.primary, letterSpacing: '0.05em' }}>{s.value}</span>
             </div>
           ))}
         </div>
@@ -435,298 +239,405 @@ export default function NervousSystem() {
       {/* ══════════════════ BODY ════════════════════════════════════════════ */}
       <div className="flex flex-1 min-h-0">
 
-        {/* ── Canvas ──────────────────────────────────────────────────────── */}
-        <div className="relative flex-1" style={{ borderRight: `1px solid ${T.border.subtle}` }}>
-          <canvas
-            ref={canvasRef}
-            width={W} height={H}
-            style={{ width: '100%', height: '100%', display: 'block', cursor: hovered ? 'pointer' : 'default' }}
-            onMouseMove={handleMove}
-            onMouseLeave={() => setHovered(null)}
-            onClick={handleClick}
-          />
+        {/* ── Graph ───────────────────────────────────────────────────────── */}
+        <div className="relative flex-1" style={{ borderRight: `1px solid ${T.border.subtle}`, background: T.bg.root }}>
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            preserveAspectRatio="xMidYMid meet"
+            style={{ width: '100%', height: '100%', display: 'block' }}
+          >
+            <defs>
+              <pattern id="gn-grid" width="28" height="28" patternUnits="userSpaceOnUse">
+                <path d="M 28 0 L 0 0 0 28" fill="none" stroke="rgba(74,70,61,0.05)" strokeWidth="0.5" />
+              </pattern>
+              <pattern id="gn-grid-major" width="140" height="140" patternUnits="userSpaceOnUse">
+                <path d="M 140 0 L 0 0 0 140" fill="none" stroke="rgba(74,70,61,0.09)" strokeWidth="0.6" />
+              </pattern>
+              <radialGradient id="gn-vignette" cx="50%" cy="42%" r="75%">
+                <stop offset="0%" stopColor="rgba(0,0,0,0)" />
+                <stop offset="100%" stopColor="rgba(30,26,20,0.05)" />
+              </radialGradient>
+            </defs>
+
+            <rect x="0" y="0" width={W} height={H} fill={T.bg.root} />
+            <rect x="0" y="0" width={W} height={H} fill="url(#gn-grid)" />
+            <rect x="0" y="0" width={W} height={H} fill="url(#gn-grid-major)" />
+            <rect x="0" y="0" width={W} height={H} fill="url(#gn-vignette)" />
+
+            {/* District containers — each district's sectors sit inside their
+                own rounded room, so the grouping reads instantly instead of
+                being implied by whitespace alone. */}
+            {districtBoxes.map((b) => {
+              const isActiveDistrict = focusedSectorId && SECTOR_BY_ID[focusedSectorId]?.district === b.district;
+              return (
+                <rect
+                  key={b.district}
+                  x={b.x} y={b.y} width={b.width} height={b.height}
+                  rx="18" ry="18"
+                  fill={T.bg.card}
+                  fillOpacity={isActiveDistrict ? 0.55 : 0.3}
+                  stroke={isActiveDistrict ? T.text.muted : T.border.default}
+                  strokeWidth={isActiveDistrict ? 1.6 : 1}
+                  style={{ transition: 'fill-opacity 0.2s, stroke 0.2s' }}
+                />
+              );
+            })}
+
+            {/* Ambient district labels — always on, only 13 so no clutter risk.
+                Rendered twice: a soft halo pass first so the text stays
+                legible sitting on top of grid lines / node glow, then the
+                actual dark label on top. */}
+            {districtLabels.map((d) => (
+              <text
+                key={`${d.district}-halo`}
+                x={d.x} y={d.y}
+                textAnchor="middle"
+                fontSize="10"
+                fontWeight="700"
+                letterSpacing="2.5"
+                stroke={T.bg.root}
+                strokeWidth="4"
+                fill={T.bg.root}
+                style={{ pointerEvents: 'none', textTransform: 'uppercase' }}
+              >
+                {d.district}
+              </text>
+            ))}
+            {districtLabels.map((d) => (
+              <text
+                key={d.district}
+                x={d.x} y={d.y}
+                textAnchor="middle"
+                fontSize="10"
+                fontWeight="700"
+                letterSpacing="2.5"
+                fill={T.text.secondary}
+                opacity="0.85"
+                style={{ pointerEvents: 'none', textTransform: 'uppercase' }}
+              >
+                {d.district}
+              </text>
+            ))}
+
+            {/* Nearest-neighbor mesh — click-driven only (see expandedSectorId note above) */}
+            {expandedSectorId && getNearest(expandedSectorId, 3).map(({ id }) => {
+              const a = layout[expandedSectorId], b = layout[id];
+              if (!a || !b) return null;
+              return (
+                <line key={id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                  stroke={T.text.muted} strokeWidth="2" strokeDasharray="2 5" strokeLinecap="round" opacity="0.75" />
+              );
+            })}
+
+            {/* Cascade propagation edges + traveling pulses */}
+            {(cascades || []).map((c, ci) =>
+              (c.spatialSpread || []).map((targetId, ti) => {
+                const a = layout[c.primarySectorId], b = layout[targetId];
+                if (!a || !b) return null;
+                const pathId = `cascade-${ci}-${ti}`;
+                const d = edgePathD(a, b);
+                return (
+                  <g key={pathId}>
+                    <path id={pathId} d={d} fill="none" stroke="#FF4444" strokeWidth="2.4" opacity="0.7" />
+                    <circle r="4" fill="#FF4444">
+                      <animateMotion dur="1.6s" repeatCount="indefinite" path={d} />
+                    </circle>
+                  </g>
+                );
+              })
+            )}
+
+            {/* Signal ping flashes */}
+            {pings.map((p) => {
+              const pos = layout[p.sectorId];
+              if (!pos) return null;
+              const col = p.critical ? '#FF4444' : '#A39C8D';
+              return (
+                <circle key={p.id} cx={pos.x} cy={pos.y} r="8" fill="none" stroke={col} strokeWidth="1.5" opacity="0.8">
+                  <animate attributeName="r" from="8" to="32" dur="1s" fill="freeze" />
+                  <animate attributeName="opacity" from="0.8" to="0" dur="1s" fill="freeze" />
+                </circle>
+              );
+            })}
+
+            {/* Sector nodes */}
+            {SECTOR_IDS.map((sectorId) => {
+              const pos = layout[sectorId];
+              const sector = SECTOR_BY_ID[sectorId];
+              const health = sectorHealth[sectorId];
+              const status = sectorStatus(health);
+              const color = STATUS_COLOR[status];
+              const isFocused = focusedSectorId === sectorId;
+              const isSelected = selectedSector === sectorId;
+              const isCascadeNode = (cascades || []).some(
+                (c) => c.primarySectorId === sectorId || (c.spatialSpread || []).includes(sectorId)
+              );
+              const r = 5 + (status === 'critical' ? 3.5 : status === 'warning' ? 1.5 : 0) + (isFocused ? 2 : 0);
+
+              return (
+                <g key={sectorId}>
+                  {status === 'critical' && (
+                    <circle cx={pos.x} cy={pos.y} r={r * 2.1} fill={color} opacity="0.14">
+                      <animate attributeName="opacity" values="0.08;0.20;0.08" dur="2.2s" repeatCount="indefinite" />
+                    </circle>
+                  )}
+                  {(isFocused || isSelected) && (
+                    <circle cx={pos.x} cy={pos.y} r={r + 6} fill="none" stroke={color} strokeWidth="1.4" opacity="0.6" />
+                  )}
+                  <polygon
+                    points={hexPoints(pos.x, pos.y, r)}
+                    fill={status === 'critical' ? '#160808' : T.bg.card}
+                    stroke={color}
+                    strokeWidth={isSelected ? 2 : 1.3}
+                    style={{ cursor: 'pointer', transition: 'stroke-width 0.15s' }}
+                    onMouseEnter={() => setHoveredSector(sectorId)}
+                    onMouseLeave={() => setHoveredSector(null)}
+                    onClick={() => {
+                      setSelectedSector((prev) => {
+                        const next = prev === sectorId ? null : sectorId;
+                        if (next !== prev) setSelectedAgentId(null);
+                        return next;
+                      });
+                    }}
+                  />
+                  <circle cx={pos.x} cy={pos.y} r={Math.max(1.4, r * 0.32)} fill={color} style={{ pointerEvents: 'none' }} />
+                  {sector.isLiveAnchor && (
+                    <circle cx={pos.x} cy={pos.y} r={r + 3.5} fill="none" stroke={color} strokeWidth="0.6" strokeDasharray="1.5 2.5" opacity="0.5" style={{ pointerEvents: 'none' }} />
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Agent ring — click-driven only, never on hover (see expandedSectorId note above) */}
+            {expandedSectorId && layout[expandedSectorId] && (() => {
+              const pos = layout[expandedSectorId];
+              const n = focusedAgents.length;
+              const ringR = 34;
+              return (
+                <g>
+                  {focusedAgents.map((sig, i) => {
+                    const angle = (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2;
+                    const ax = pos.x + Math.cos(angle) * ringR;
+                    const ay = pos.y + Math.sin(angle) * ringR;
+                    const col = agentStatusColor(sig.anomalyLevel);
+                    const isSel = selectedAgentId === sig.agentId;
+                    const isHov = hoveredAgent === sig.agentId;
+                    return (
+                      <g key={sig.agentId}>
+                        <line x1={pos.x} y1={pos.y} x2={ax} y2={ay} stroke={col} strokeWidth="1.5" opacity="0.65" />
+                        <circle
+                          cx={ax} cy={ay} r={isSel || isHov ? 6.5 : 5}
+                          fill={sig.anomalyLevel === 'critical' ? '#160808' : T.bg.card}
+                          stroke={col} strokeWidth={isSel ? 2 : 1.2}
+                          style={{ cursor: 'pointer', transition: 'r 0.12s' }}
+                          onMouseEnter={() => setHoveredAgent(sig.agentId)}
+                          onMouseLeave={() => setHoveredAgent(null)}
+                          onClick={() => {
+                            setSelectedSector(expandedSectorId);
+                            setSelectedAgentId((prev) => prev === sig.agentId ? null : sig.agentId);
+                          }}
+                        />
+                      </g>
+                    );
+                  })}
+                  {/* single agent tooltip — never more than one on screen */}
+                  {hoveredAgent && focusedAgents.find((a) => a.agentId === hoveredAgent) && (() => {
+                    const sig = focusedAgents.find((a) => a.agentId === hoveredAgent);
+                    const i = focusedAgents.indexOf(sig);
+                    const angle = (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2;
+                    const ax = pos.x + Math.cos(angle) * ringR;
+                    const ay = pos.y + Math.sin(angle) * ringR;
+                    const label = labelize(sig.agentId);
+                    const w = Math.max(90, label.length * 5.6 + 24);
+                    const { x, y } = clampLabel(ax, ay - 18, w, 30);
+                    const col = agentStatusColor(sig.anomalyLevel);
+                    return (
+                      <g style={{ pointerEvents: 'none' }}>
+                        <rect x={x - w / 2} y={y - 20} width={w} height={26} rx="3" fill={T.bg.card} stroke={col} strokeWidth="1" />
+                        <text x={x} y={y - 8} textAnchor="middle" fontSize="8" fontWeight="700" letterSpacing="0.5" fill={T.text.primary} style={{ textTransform: 'uppercase' }}>{label}</text>
+                        <text x={x} y={y + 2} textAnchor="middle" fontSize="8" fontWeight="700" fill={col}>{sig.healthScore}/100 · {sig.anomalyLevel}</text>
+                      </g>
+                    );
+                  })()}
+                </g>
+              );
+            })()}
+
+            {/* Hover label — one at a time, background pill, clamped inside frame */}
+            {hoverLabel && (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={hoverLabel.x - hoverLabel.w / 2} y={hoverLabel.y - 26} width={hoverLabel.w} height={34} rx="3"
+                  fill={T.bg.card} stroke={STATUS_COLOR[hoverLabel.status]} strokeWidth="1.2" />
+                <text x={hoverLabel.x} y={hoverLabel.y - 12} textAnchor="middle" fontSize="9.5" fontWeight="700" fill={T.text.primary}>
+                  {hoverLabel.sector.name}
+                </text>
+                <text x={hoverLabel.x} y={hoverLabel.y - 1} textAnchor="middle" fontSize="8" fontWeight="600" fill={STATUS_COLOR[hoverLabel.status]}>
+                  {hoverLabel.health ? `health ${hoverLabel.health.minHealthScore} · ${hoverLabel.status}` : 'nominal'}
+                </text>
+              </g>
+            )}
+          </svg>
 
           {/* Legend */}
-          <div
-            className="absolute bottom-4 left-4 flex flex-col gap-2 px-3 py-2.5"
-            style={{ background: T.bg.card + 'F0', border: `1px solid ${T.border.subtle}` }}
-          >
+          <div className="absolute bottom-4 left-4 flex flex-col gap-2 px-3 py-2.5" style={{ background: T.bg.card + 'F0', border: `1px solid ${T.border.subtle}` }}>
             {[
-              { color: '#5B8FE8', label: 'Air quality'  },
-              { color: '#F0A830', label: 'Transport'     },
-              { color: '#C85DC8', label: 'Sentiment'     },
-              { color: '#FF4444', label: 'Alert/cascade' },
-            ].map(l => (
+              { color: STATUS_COLOR.normal, label: 'Normal sector' },
+              { color: STATUS_COLOR.warning, label: 'Warning' },
+              { color: STATUS_COLOR.critical, label: 'Critical' },
+              { color: '#FF4444', label: 'Cascade edge' },
+            ].map((l) => (
               <div key={l.label} className="flex items-center gap-2">
                 <svg width="14" height="12" viewBox="0 0 14 12">
-                  <polygon points="7,1 13,4 13,8 7,11 1,8 1,4" fill="none" stroke={l.color} strokeWidth="1.2"/>
+                  <polygon points="7,1 13,4 13,8 7,11 1,8 1,4" fill="none" stroke={l.color} strokeWidth="1.2" />
                 </svg>
                 <span className="text-[8px] tracking-wider" style={{ color: T.text.micro }}>{l.label}</span>
               </div>
             ))}
           </div>
 
-          {/* Hover tooltip — only when nothing selected */}
-          {hovered && !selected && (() => {
-            const n   = NODES[hovered];
-            const ak  = Object.keys(AGENT_MAP).find(k => AGENT_MAP[k] === hovered);
-            const sig = ak ? signals[ak] : null;
-            return (
-              <div
-                className="absolute top-4 right-4 px-3 py-2.5 flex flex-col gap-1.5"
-                style={{ border: `1px solid ${n.color}55`, background: T.bg.card, minWidth: 176 }}
-              >
-                <div className="flex items-center gap-2">
-                  <div style={{ width: 7, height: 7, background: n.color, clipPath: 'polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%)' }} />
-                  <span className="text-[10px] font-bold tracking-[0.15em]" style={{ color: n.color }}>{n.label}</span>
-                </div>
-                <span className="text-[8px]" style={{ color: T.text.micro }}>{n.sub}</span>
-                {sig && (
-                  <>
-                    <div style={{ height: 1, background: T.border.subtle, margin: '2px 0' }} />
-                    <span className="text-[9px]" style={{ color: T.text.secondary }}>
-                      health: <span style={{ color: sig.anomalyLevel === 'critical' ? '#FF4444' : T.text.primary }}>{sig.healthScore}/100</span>
-                    </span>
-                    <span className="text-[9px]" style={{ color: T.text.secondary }}>
-                      status: <span style={{ color: sig.anomalyLevel === 'critical' ? '#FF4444' : sig.anomalyLevel === 'moderate' ? '#F0A830' : n.color }}>{sig.anomalyLevel}</span>
-                    </span>
-                    <span className="text-[9px] leading-relaxed" style={{ color: T.text.micro }}>
-                      {sig.signal?.slice(0, 70)}{sig.signal?.length > 70 ? '…' : ''}
-                    </span>
-                  </>
-                )}
-                {hovered === 'cascade' && cascade && (
-                  <>
-                    <div style={{ height: 1, background: T.border.subtle, margin: '2px 0' }} />
-                    <span className="text-[9px] font-bold" style={{ color: '#FF4444' }}>{cascade.confidence}% confidence</span>
-                    <span className="text-[9px]" style={{ color: T.text.secondary }}>{cascade.predictedEvent}</span>
-                  </>
-                )}
-                <span className="text-[8px] mt-1" style={{ color: T.text.micro }}>click to pin ↗</span>
-              </div>
-            );
-          })()}
-
           {/* Cascade active banner */}
-          {cascade && (
-            <div
-              className="absolute top-4 left-1/2 flex items-center gap-2 px-3 py-1.5"
-              style={{
-                transform: 'translateX(-50%)',
-                background: '#160808',
-                border: '1px solid #FF4444AA',
-              }}
-            >
+          {cascades.length > 0 && (
+            <div className="absolute top-4 left-1/2 flex items-center gap-3 px-3 py-1.5" style={{ transform: 'translateX(-50%)', background: '#160808', border: '1px solid #FF4444AA' }}>
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#FF4444', boxShadow: '0 0 6px #FF4444' }} />
-              <span className="text-[9px] tracking-[0.25em] font-bold" style={{ color: '#FF4444' }}>CASCADE ACTIVE</span>
-              <span className="text-[9px]" style={{ color: 'rgba(255,68,68,0.6)' }}>{cascade.confidence}% CONF</span>
+              <span className="text-[9px] tracking-[0.25em] font-bold" style={{ color: '#FF4444' }}>
+                {cascades.length} CASCADE{cascades.length > 1 ? 'S' : ''} ACTIVE
+              </span>
+              <span className="text-[9px]" style={{ color: 'rgba(255,68,68,0.6)' }}>
+                {cascades[0].primarySectorName} · {cascades[0].confidence}% CONF
+              </span>
             </div>
           )}
         </div>
 
         {/* ── Side panel ──────────────────────────────────────────────────── */}
-        <div className="flex flex-col flex-shrink-0" style={{ width: 210, background: T.bg.card }}>
-          {selNode ? (
+        <div className="flex flex-col flex-shrink-0 overflow-y-auto" style={{ width: 240, background: T.bg.card }}>
+          {selectedSector ? (
             <>
-              {/* Node header */}
-              <div
-                className="px-4 py-3 flex items-center justify-between flex-shrink-0"
-                style={{ borderBottom: `1px solid ${T.border.subtle}` }}
-              >
+              <div className="px-4 py-3 flex items-center justify-between flex-shrink-0" style={{ borderBottom: `1px solid ${T.border.subtle}` }}>
                 <div className="flex items-center gap-2">
                   <svg width="12" height="11" viewBox="0 0 12 11">
-                    <polygon points="6,0.5 11.5,3.25 11.5,7.75 6,10.5 0.5,7.75 0.5,3.25"
-                      fill="none" stroke={selNode.color} strokeWidth="1.2"/>
+                    <polygon points="6,0.5 11.5,3.25 11.5,7.75 6,10.5 0.5,7.75 0.5,3.25" fill="none" stroke={STATUS_COLOR[sectorStatus(selHealth)]} strokeWidth="1.2" />
                   </svg>
-                  <span className="text-[10px] font-bold tracking-[0.15em]" style={{ color: selNode.color }}>
-                    {selNode.label}
+                  <span className="text-[10px] font-bold tracking-[0.15em]" style={{ color: STATUS_COLOR[sectorStatus(selHealth)] }}>
+                    {selSector?.name || selectedSector}
                   </span>
                 </div>
-                <button
-                  onClick={() => setSelected(null)}
-                  style={{ color: T.text.micro, background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, padding: 0 }}
-                >✕</button>
+                <button onClick={() => { setSelectedSector(null); setSelectedAgentId(null); }} style={{ color: T.text.micro, background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, padding: 0 }}>✕</button>
               </div>
-              <span className="px-4 pt-2 text-[8px] tracking-wider" style={{ color: T.text.micro }}>{selNode.sub}</span>
+              <span className="px-4 pt-2 text-[8px] tracking-wider" style={{ color: T.text.micro }}>{selSector?.district || 'UNKNOWN'}</span>
 
-              {/* Signal data */}
-              {selSig ? (
-                <div className="px-4 py-3 flex flex-col gap-4 overflow-y-auto">
-
-                  {/* Health gauge */}
+              <div className="px-4 py-3 flex flex-col gap-4">
+                {selHealth && (
                   <div className="flex flex-col gap-2">
                     <div className="flex justify-between">
-                      <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Health</span>
-                      <span className="text-[12px] font-bold" style={{
-                        color: selSig.anomalyLevel === 'critical' ? '#FF4444'
-                          : selSig.anomalyLevel === 'moderate' ? '#F0A830'
-                          : '#5BC87B'
-                      }}>{selSig.healthScore}</span>
+                      <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Sector health</span>
+                      <span className="text-[12px] font-bold" style={{ color: STATUS_COLOR[sectorStatus(selHealth)] }}>{selHealth.minHealthScore}</span>
                     </div>
-                    {/* Bar */}
                     <div style={{ height: 4, background: T.bg.surface, borderRadius: 2 }}>
                       <div style={{
-                        height: '100%',
-                        width: `${selSig.healthScore}%`,
-                        background: selSig.anomalyLevel === 'critical' ? '#FF4444' : selSig.anomalyLevel === 'moderate' ? '#F0A830' : selNode.color,
-                        borderRadius: 2,
-                        boxShadow: `0 0 6px ${selSig.anomalyLevel === 'critical' ? '#FF444488' : selNode.color + '66'}`,
+                        height: '100%', width: `${selHealth.minHealthScore}%`,
+                        background: STATUS_COLOR[sectorStatus(selHealth)], borderRadius: 2,
+                        boxShadow: `0 0 6px ${STATUS_COLOR[sectorStatus(selHealth)]}66`,
                         transition: 'width 0.6s ease',
                       }} />
                     </div>
+                    <span className="text-[9px] font-bold tracking-widest" style={{ color: STATUS_COLOR[sectorStatus(selHealth)] }}>
+                      {sectorStatus(selHealth).toUpperCase()}
+                    </span>
                   </div>
+                )}
 
-                  {/* Status */}
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Status</span>
-                    <div
-                      className="px-2 py-1 inline-block"
-                      style={{
-                        background: selSig.anomalyLevel === 'critical' ? '#1A0606' : T.bg.surface,
-                        border: `1px solid ${selSig.anomalyLevel === 'critical' ? '#FF444455' : selSig.anomalyLevel === 'moderate' ? '#F0A83055' : T.border.subtle}`,
-                      }}
-                    >
-                      <span className="text-[9px] font-bold tracking-widest" style={{
-                        color: selSig.anomalyLevel === 'critical' ? '#FF4444'
-                          : selSig.anomalyLevel === 'moderate' ? '#F0A830'
-                          : T.text.muted
-                      }}>
-                        {selSig.anomalyLevel?.toUpperCase()}
-                      </span>
-                    </div>
+                {selCascade && (
+                  <div className="px-2 py-2 flex flex-col gap-1" style={{ background: '#160808', border: '1px solid #FF444455' }}>
+                    <span className="text-[8px] tracking-wider uppercase font-bold" style={{ color: '#FF4444' }}>
+                      {selCascade.primarySectorId === selectedSector ? 'CASCADE ORIGIN' : 'CASCADE SPREAD'}
+                    </span>
+                    <span className="text-[9px]" style={{ color: T.text.secondary }}>{selCascade.predictedEvent}</span>
+                    <span className="text-[9px]" style={{ color: T.text.muted }}>{selCascade.confidence}% confidence · ~{selCascade.hoursUntil}h</span>
                   </div>
+                )}
 
-                  {/* Signal text */}
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Active agents</span>
+                  {selAgents.length === 0 && <span className="text-[9px]" style={{ color: T.text.micro }}>No signals for this sector</span>}
+                  {selAgents.map((a) => {
+                    const col = agentStatusColor(a.anomalyLevel);
+                    const isSel = selectedAgentId === a.agentId;
+                    return (
+                      <div
+                        key={a.agentId}
+                        onClick={() => setSelectedAgentId((prev) => prev === a.agentId ? null : a.agentId)}
+                        className="flex flex-col gap-1 px-2 py-1.5 cursor-pointer"
+                        style={{ background: isSel ? T.bg.surface : 'transparent', border: `1px solid ${a.anomalyLevel === 'critical' ? '#FF444440' : T.border.subtle}` }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[8px] tracking-wide uppercase" style={{ color: T.text.secondary }}>{labelize(a.agentId)}</span>
+                          <span className="text-[9px] font-bold" style={{ color: col }}>{a.healthScore}</span>
+                        </div>
+                        <div style={{ height: 3, background: T.bg.surface, borderRadius: 2 }}>
+                          <div style={{ height: '100%', width: `${a.healthScore}%`, background: col, borderRadius: 2, transition: 'width 0.5s ease' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {selAgent && (
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Latest signal</span>
-                    <p className="text-[9px] leading-relaxed" style={{ color: T.text.secondary }}>{selSig.signal ?? '—'}</p>
+                    <p className="text-[9px] leading-relaxed" style={{ color: T.text.secondary }}>{selAgent.signal ?? '—'}</p>
+                    {selAgent.timestamp && <span className="text-[9px]" style={{ color: T.text.muted }}>{new Date(selAgent.timestamp).toLocaleTimeString()}</span>}
                   </div>
+                )}
 
-                  {/* Timestamp */}
-                  {selSig.timestamp && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Timestamp</span>
-                      <span className="text-[9px]" style={{ color: T.text.muted }}>{new Date(selSig.timestamp).toLocaleTimeString()}</span>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Nearest sectors</span>
+                  {selNearest.map(({ id, distanceKm }) => (
+                    <div key={id} onClick={() => { setSelectedSector(id); setSelectedAgentId(null); }} className="flex items-center justify-between cursor-pointer">
+                      <span className="text-[8px]" style={{ color: T.text.muted }}>→ {SECTOR_BY_ID[id]?.name || id}</span>
+                      <span className="text-[8px]" style={{ color: T.text.micro }}>{distanceKm.toFixed(1)}km</span>
                     </div>
-                  )}
-
-                  {/* Edges */}
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[8px] tracking-wider uppercase" style={{ color: T.text.micro }}>Connections</span>
-                    {EDGES.filter(e => e.from === selected || e.to === selected).map(e => (
-                      <div key={e.id} className="flex items-center gap-2">
-                        <div style={{ width: 5, height: 5, background: e.color, borderRadius: '50%', flexShrink: 0 }} />
-                        <span className="text-[8px]" style={{ color: T.text.muted }}>
-                          {NODES[e.from].label} → {NODES[e.to].label}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  ))}
                 </div>
-              ) : selected === 'cascade' && cascade ? (
-                <div className="px-4 py-3 flex flex-col gap-4">
-                  <div>
-                    <span className="text-[8px] tracking-wider uppercase block mb-1" style={{ color: T.text.micro }}>Confidence</span>
-                    <span className="text-[28px] font-bold" style={{ color: '#FF4444' }}>{cascade.confidence}%</span>
-                  </div>
-                  <div>
-                    <span className="text-[8px] tracking-wider uppercase block mb-1" style={{ color: T.text.micro }}>Predicted event</span>
-                    <p className="text-[9px] leading-relaxed" style={{ color: T.text.secondary }}>{cascade.predictedEvent}</p>
-                  </div>
-                  {cascade.hoursUntil && (
-                    <div>
-                      <span className="text-[8px] tracking-wider uppercase block mb-1" style={{ color: T.text.micro }}>Hours until</span>
-                      <span className="text-[16px] font-bold" style={{ color: T.text.primary }}>{cascade.hoursUntil}h</span>
-                    </div>
-                  )}
-                  {cascade.recommendation && (
-                    <div>
-                      <span className="text-[8px] tracking-wider uppercase block mb-1" style={{ color: T.text.micro }}>Recommendation</span>
-                      <p className="text-[9px] leading-relaxed" style={{ color: T.text.secondary }}>{cascade.recommendation}</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="px-4 py-3">
-                  <span className="text-[9px]" style={{ color: T.text.micro }}>No live data for this node</span>
-                </div>
-              )}
+              </div>
             </>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4">
               <svg width="36" height="32" viewBox="0 0 36 32">
-                <polygon points="18,1.5 34.5,9.75 34.5,22.25 18,30.5 1.5,22.25 1.5,9.75"
-                  fill="none" stroke={T.border.subtle} strokeWidth="1" strokeDasharray="3 3"/>
-                <polygon points="18,8 27,12.5 27,19.5 18,24 9,19.5 9,12.5"
-                  fill="none" stroke={T.border.subtle} strokeWidth="0.6"/>
-                <circle cx="18" cy="16" r="2.5" fill={T.border.default} opacity="0.5"/>
+                <polygon points="18,1.5 34.5,9.75 34.5,22.25 18,30.5 1.5,22.25 1.5,9.75" fill="none" stroke={T.border.subtle} strokeWidth="1" strokeDasharray="3 3" />
+                <polygon points="18,8 27,12.5 27,19.5 18,24 9,19.5 9,12.5" fill="none" stroke={T.border.subtle} strokeWidth="0.6" />
+                <circle cx="18" cy="16" r="2.5" fill={T.border.default} opacity="0.5" />
               </svg>
               <span className="text-[8px] tracking-wider text-center leading-relaxed" style={{ color: T.text.micro }}>
-                click any node<br/>to inspect signal
+                click any sector<br />to inspect agents &amp; signals
               </span>
             </div>
           )}
         </div>
       </div>
 
-      {/* ══════════════════ AGENT ROW ════════════════════════════════════════ */}
-      <div className="grid grid-cols-3 flex-shrink-0" style={{ borderTop: `1px solid ${T.border.subtle}` }}>
-        {['air_quality', 'transport', 'sentiment'].map((agId, i) => {
-          const sig    = signals[agId];
-          const nid    = AGENT_MAP[agId];
-          const node   = NODES[nid];
-          const isCrit = sig?.anomalyLevel === 'critical';
-          const isMod  = sig?.anomalyLevel === 'moderate';
-          const isSel  = selected === nid;
-          return (
-            <div
-              key={agId}
-              className="px-4 py-3 flex flex-col gap-1.5"
-              style={{
-                borderRight: i < 2 ? `1px solid ${T.border.subtle}` : 'none',
-                background: isCrit ? '#110606' : isSel ? T.bg.surface : T.bg.card,
-                cursor: 'pointer',
-                transition: 'background 0.2s',
-              }}
-              onClick={() => setSelected(prev => prev === nid ? null : nid)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <svg width="9" height="8" viewBox="0 0 9 8">
-                    <polygon points="4.5,0.5 8.5,2.5 8.5,5.5 4.5,7.5 0.5,5.5 0.5,2.5"
-                      fill="none" stroke={node.color} strokeWidth="1"/>
-                  </svg>
-                  <span className="text-[8px] tracking-[0.2em] uppercase font-bold"
-                    style={{ color: isCrit ? 'rgba(252,250,245,0.35)' : T.text.micro }}>
-                    {agId.replace('_', ' ')}
-                  </span>
-                </div>
-                {sig && (
-                  <span className="text-[10px] font-bold" style={{ color: isCrit ? '#FF4444' : isMod ? '#F0A830' : node.color }}>
-                    {sig.healthScore}
-                  </span>
-                )}
-              </div>
-
-              <p className="text-[9px] leading-relaxed" style={{ color: isCrit ? 'rgba(252,250,245,0.6)' : T.text.secondary }}>
-                {sig?.signal ?? '—'}
-              </p>
-
-              {/* Health bar */}
-              <div style={{ height: 2, background: T.bg.surface, marginTop: 2 }}>
-                {sig && (
-                  <div style={{
-                    height: '100%',
-                    width: `${sig.healthScore}%`,
-                    background: isCrit ? '#FF4444' : isMod ? '#F0A830' : node.color,
-                    boxShadow: isCrit ? '0 0 4px #FF4444' : undefined,
-                    transition: 'width 0.6s ease',
-                  }} />
-                )}
-              </div>
+      {/* ══════════════════ CRITICAL AGENTS TICKER ═══════════════════════════ */}
+      <div className="flex overflow-x-auto flex-shrink-0" style={{ borderTop: `1px solid ${T.border.subtle}`, maxHeight: 108 }}>
+        {topCritical.length === 0 && (
+          <div className="px-4 py-3"><span className="text-[9px]" style={{ color: T.text.micro }}>No critical agents right now</span></div>
+        )}
+        {topCritical.map((sig, i) => (
+          <div
+            key={`${sig.sectorId}:${sig.agentId}`}
+            onClick={() => { setSelectedSector(sig.sectorId); setSelectedAgentId(sig.agentId); }}
+            className="px-4 py-3 flex flex-col gap-1 flex-shrink-0 cursor-pointer"
+            style={{ width: 190, borderRight: i < topCritical.length - 1 ? `1px solid ${T.border.subtle}` : 'none', background: '#110606' }}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[8px] tracking-[0.2em] uppercase font-bold" style={{ color: 'rgba(252,250,245,0.5)' }}>{labelize(sig.agentId)}</span>
+              <span className="text-[10px] font-bold" style={{ color: '#FF4444' }}>{sig.healthScore}</span>
             </div>
-          );
-        })}
+            <span className="text-[8px]" style={{ color: 'rgba(252,250,245,0.4)' }}>{SECTOR_BY_ID[sig.sectorId]?.name || sig.sectorId}</span>
+            <p className="text-[9px] leading-relaxed" style={{ color: 'rgba(252,250,245,0.6)' }}>
+              {sig.signal?.slice(0, 60)}{sig.signal?.length > 60 ? '…' : ''}
+            </p>
+          </div>
+        ))}
       </div>
     </div>
   );
