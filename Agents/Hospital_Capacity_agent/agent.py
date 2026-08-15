@@ -8,6 +8,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .capacity_model import HospitalCapacityModel
 from .hospital_api_fetcher import HospitalDataFetcher
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 log = logging.getLogger("autonet.agent.hospital_capacity")
 
@@ -23,6 +24,7 @@ class GenericHospitalCapacityAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 40,
     ) -> None:
         self.config = config
@@ -30,6 +32,8 @@ class GenericHospitalCapacityAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "hospital_capacity"
         self.domain = "infrastructure"
+        self.store = store
+
         self._loop_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -125,6 +129,8 @@ class GenericHospitalCapacityAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 4. Emit Payload to Central Gateway
         try:

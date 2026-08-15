@@ -11,6 +11,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .thermal_model import ThermalModel
 from .weather_api_fetcher import WeatherApiFetcher
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 load_dotenv()
 
@@ -27,6 +28,7 @@ class GenericThermalAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 60,
     ) -> None:
         self.config = config
@@ -34,6 +36,7 @@ class GenericThermalAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "thermal_stress"
         self.domain = "environment"
+        self.store = store
 
         # HTTP client kept solely for external weather API telemetry calls
         self._http_client: httpx.AsyncClient | None = None
@@ -144,6 +147,8 @@ class GenericThermalAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 5. Dispatch Signal via Shared Socket.io Channel
         try:

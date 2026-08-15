@@ -11,6 +11,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .corridor_model import CorridorModel
 from .corridor_api_fetcher import CorridorFetcher
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 load_dotenv()
 
@@ -29,6 +30,7 @@ class GenericRoadCorridorAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 60,
     ) -> None:
         self.config = config
@@ -36,6 +38,7 @@ class GenericRoadCorridorAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "road_corridor"
         self.domain = "transit"
+        self.store = store
 
         # HTTP client kept solely for external TomTom/telemetry API calls
         self._http_client: httpx.AsyncClient | None = None
@@ -141,6 +144,8 @@ class GenericRoadCorridorAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 4. Dispatch Signal via Shared Socket.io Connection
         try:

@@ -9,6 +9,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .panic_model import SocialPanicModel
 from .social_data_fetcher import SocialDataFetcher
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 log = logging.getLogger("autonet.agent.social_panic")
 
@@ -24,6 +25,7 @@ class GenericSocialPanicAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 35,
     ) -> None:
         self.config = config
@@ -31,6 +33,7 @@ class GenericSocialPanicAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "social_panic"
         self.domain = "civic"
+        self.store = store
 
         self._http_client: httpx.AsyncClient | None = None
         self._loop_task: asyncio.Task[None] | None = None
@@ -137,6 +140,7 @@ class GenericSocialPanicAgent(BaseAgent):
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
+        record = await self.store.update_signal(payload)
         # 4. Dispatch Signal via Socket.io
         try:
             if self.sio.connected:

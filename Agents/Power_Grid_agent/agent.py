@@ -9,6 +9,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .grid_model import PowerGridModel
 from .sdlc_api_fetcher import SLDCDataFetcher
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 log = logging.getLogger("autonet.agent.power_grid")
 
@@ -24,6 +25,7 @@ class GenericPowerGridAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 30,
     ) -> None:
         self.config = config
@@ -31,6 +33,7 @@ class GenericPowerGridAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "power_grid"
         self.domain = "infrastructure"
+        self.store = store
 
         # HTTP client kept solely for external API / scraper telemetry fetching
         self._http_client: httpx.AsyncClient | None = None
@@ -136,6 +139,8 @@ class GenericPowerGridAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 4. Dispatch Signal via Persistent Socket.io Channel
         try:

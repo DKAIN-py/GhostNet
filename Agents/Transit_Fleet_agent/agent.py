@@ -10,6 +10,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .mobility_model import MobilityModel
 from .gtfs_fetcher import GtfsFetcher
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ class GenericTransitAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 60,
     ) -> None:
         self.config = config
@@ -33,6 +35,7 @@ class GenericTransitAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "transit_fleet"
         self.domain = "transit"
+        self.store = store
 
         # HTTP client kept solely for external GTFS-RT feed fetching
         self._http_client: httpx.AsyncClient | None = None
@@ -136,6 +139,8 @@ class GenericTransitAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 4. Dispatch Signal via Shared Socket.io Connection
         try:

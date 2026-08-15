@@ -8,6 +8,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .dispatch_data_fetcher import DispatchDataFetcher
 from .dispatch_model import DispatchKinematicsModel
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 log = logging.getLogger("autonet.agent.emergency_dispatch")
 
@@ -23,6 +24,7 @@ class GenericEmergencyDispatchAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 30,
     ) -> None:
         self.config = config
@@ -30,6 +32,8 @@ class GenericEmergencyDispatchAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "emergency_dispatch"
         self.domain = "civic"
+        self.store = store
+
         self._loop_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -125,6 +129,8 @@ class GenericEmergencyDispatchAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 4. Emit Payload to Socket.io Pipeline
         try:

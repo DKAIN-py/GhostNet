@@ -9,6 +9,7 @@ from Agents.BaseAgent import BaseAgent
 from config.sector_config import SectorConfig
 from .dfs_incident_fetcher import DFSApiFetcher
 from .hazard_model import IndustrialHazardModel
+from Cascade_Engine.sector_state_store import SectorStateStore
 
 log = logging.getLogger("autonet.agent.industrial_hazard")
 
@@ -24,6 +25,7 @@ class GenericIndustrialHazardAgent(BaseAgent):
         self,
         config: SectorConfig,
         sio: socketio.AsyncClient,
+        store: SectorStateStore,
         poll_interval: int = 45,
     ) -> None:
         self.config = config
@@ -31,6 +33,7 @@ class GenericIndustrialHazardAgent(BaseAgent):
         self.poll_interval = poll_interval
         self.agent_id = "industrial_hazard"
         self.domain = "infrastructure"
+        self.store = store
 
         # HTTP client kept solely for external API telemetry fetching
         self._http_client: httpx.AsyncClient | None = None
@@ -134,6 +137,8 @@ class GenericIndustrialHazardAgent(BaseAgent):
             },
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+        record = await self.store.update_signal(payload)
 
         # 4. Dispatch Signal via Persistent Socket.io Channel
         try:
