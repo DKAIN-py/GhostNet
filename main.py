@@ -1,5 +1,13 @@
 """
 Need to Create a ML model on the historical data of Metero system from Open transit data
+Metero Transit agent is left cuz of lack of data
+
+11/12 agents done
+
+# Hospital Capacity agent uses syntheic data cuz hospitals dosen't provide sufficent data publically.
+
+# Emergrncy dispact agent uses synthetic data cuz police dosen't provide data publically
+
 """
 
 
@@ -16,18 +24,24 @@ from fastapi import FastAPI
 
 from .Agents.BaseAgent import BaseAgent
 from .config.sector_registry import ALL_SECTORS
+
 from .Agents.Smog_and_Dispersion_agent.agent import GenericSmogAgent
 from .Agents.Waterloggin_Hydrology_agent.agent import GenericWaterloggingAgent
 from .Agents.Thermal_Stress_agent.agent import GenericThermalAgent
 from .Agents.Transit_Fleet_agent.agent import GenericTransitAgent
 from .Agents.Arterial_Congestion_agent.agent import GenericRoadCorridorAgent
 from .Agents.Power_Grid_agent.agent import GenericPowerGridAgent
+from .Agents.Structural_Industrial_Hazard_agent.agent import GenericIndustrialHazardAgent
+from .Agents.Hospital_Capacity_agent.agent import GenericHospitalCapacityAgent
+from .Agents.Emergency_Dispatch_agent.agent import GenericEmergencyDispatchAgent
+from .Agents.Social_Panic_Agent.agent import GenericSocialPanicAgent
+from .Agents.Muncipal_Advisory_agent.agent import GenericMuncipalAdvisoryAgent
 
 log = logging.getLogger("autonet.master")
 
 load_dotenv()
 
-SOCKET_URL = os.getenv("SOCKET_URL", "http://localhost:3001")
+from global_config import SOCKET_URL, POLL_INTERVAL_SEC
 
 # Global registry to hold active agent instances
 active_agents: List[BaseAgent] = []
@@ -42,6 +56,11 @@ ALL_AGENT_CLASSES = [
     GenericTransitAgent,
     GenericRoadCorridorAgent,
     GenericPowerGridAgent,
+    GenericIndustrialHazardAgent,
+    GenericHospitalCapacityAgent,
+    GenericEmergencyDispatchAgent,
+    GenericSocialPanicAgent,
+    GenericMuncipalAdvisoryAgent
 ]
 
 
@@ -67,7 +86,7 @@ async def master_lifespan(app: FastAPI):
             curr_agent = AgentClass(
                 config=sector_config,
                 sio=sio,
-                poll_interval=60
+                poll_interval=POLL_INTERVAL_SEC
             )
             await curr_agent.start()
             active_agents.append(curr_agent)

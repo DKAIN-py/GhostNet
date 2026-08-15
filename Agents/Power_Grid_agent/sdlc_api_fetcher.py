@@ -12,7 +12,7 @@ class SLDCDataFetcher:
     """Fetcher and parser for Delhi State Load Despatch Center (SLDC) real-time data."""
 
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
-        self.client = http_client or httpx.AsyncClient(timeout=10.0)
+        self.client = http_client or httpx.AsyncClient(timeout=20.0)
 
     async def fetch_live_html(self) -> Optional[str]:
         """Fetch real-time HTML from Delhi SLDC dashboard."""

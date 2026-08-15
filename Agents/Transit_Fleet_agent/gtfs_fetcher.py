@@ -8,7 +8,7 @@ from google.transit import gtfs_realtime_pb2
 
 log = logging.getLogger("autonet.domain.gtfs_fetcher")
 
-DELHI_TRANSIT_API_KEY = os.getenv("DELHI_TRANSIT_API_KEY", None)
+from global_config import DELHI_TRANSIT_API_KEY
 STATIONARY_SPEED_THRESHOLD_MS = 1.4  # ~5 km/h threshold for stationary buses
 
 

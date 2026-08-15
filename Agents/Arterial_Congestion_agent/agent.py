@@ -16,7 +16,7 @@ load_dotenv()
 
 log = logging.getLogger("autonet.agent.road_corridor")
 
-TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", None)
+from global_config import TOMTOM_API_KEY
 
 
 class GenericRoadCorridorAgent(BaseAgent):

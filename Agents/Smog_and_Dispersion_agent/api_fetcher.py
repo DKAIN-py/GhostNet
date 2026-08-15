@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = str(os.getenv("WAQI_TOKEN"))
+from global_config import WAQI_TOKEN
 
 class AQIApiFetcher:
     """Stateless fetcher for real-world environmental APIs with local fallback."""
@@ -19,7 +19,7 @@ class AQIApiFetcher:
     async def fetch_station_telemetry(
         client: httpx.AsyncClient,
         station_id: str,
-        token: str = TOKEN
+        token: str = WAQI_TOKEN
     ) -> Dict[str, Any]:
         """Fetches telemetry from WAQI / CPCB feeds."""
         url = f"https://api.waqi.info/feed/{station_id}/?token={token}"
