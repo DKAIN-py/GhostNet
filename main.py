@@ -34,6 +34,7 @@ from .Agents.Structural_Industrial_Hazard_agent.agent import GenericIndustrialHa
 from .Agents.Thermal_Stress_agent.agent import GenericThermalAgent
 from .Agents.Transit_Fleet_agent.agent import GenericTransitAgent
 from .Agents.Waterloggin_Hydrology_agent.agent import GenericWaterloggingAgent
+from .Agents.Metero_Transit_agent.agent import GenericMetroTransitAgent
 from .config.sector_registry import ALL_SECTORS
 from Cascade_Engine.cascade_engine import CascadeEngine
 from Cascade_Engine.sector_state_store import SectorStateStore
@@ -65,6 +66,7 @@ ALL_AGENT_CLASSES = [
     GenericEmergencyDispatchAgent,
     GenericSocialPanicAgent,
     GenericMuncipalAdvisoryAgent,
+    GenericMetroTransitAgent
 ]
 
 

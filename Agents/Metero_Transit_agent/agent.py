@@ -83,9 +83,7 @@ class GenericMetroTransitAgent(BaseAgent):
 
         # 1. Ingest Telemetry via external DMRC/GTFS API
         telemetry = await MetroFetcher.fetch_station_telemetry(
-            client=self._http_client,
             sector_id=self.config.sector_id,
-            dmrc_api_key=DMRC_API_KEY,
         )
 
         inflow_per_min = telemetry["passengerInflowPerMin"]

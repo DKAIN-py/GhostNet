@@ -42,10 +42,6 @@ class SectorConfig(BaseModel):
     primary_drain_outfall: Optional[str] = None  # e.g., "Najafgarh Drain", "Barapulla Drain", "Trans-Yamuna Drain"
     baseline_drain_capacity_mmhr: float = 25.0   # Max absorption rate before standing water accumulates
 
-    # Agent 4: Vision Hazard / Camera Sentinel (vision_hazard)
-    monitored_camera_id: Optional[str] = None
-    camera_rtsp_stream_url: Optional[str] = None
-
     # -------------------------------------------------------------------------
     # DOMAIN 2: INFRASTRUCTURE AGENTS (Agents 5 - 9)
     # -------------------------------------------------------------------------
@@ -59,6 +55,23 @@ class SectorConfig(BaseModel):
     # Agent 6: Public Transit Saturation (public_transit)
     primary_choke_corridor: Optional[str] = None
     baseline_bus_capacity: int = 35  # Expected active buses in sector geofence
+
+    has_metro_station: bool = False
+    metro_station_name: Optional[str] = (
+        None  # Matches 'Name' in Gate Excel / GTFS
+    )
+    is_metro_interchange: bool = False
+    total_metro_gates: int = 8  # Derived from Metro Gate Excel dataset
+    connecting_metro_lines: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Lines serving this station, e.g. ['Red Line', 'Yellow Line']"
+        ),
+    )
+    gtfs_stop_ids: List[str] = Field(
+        default_factory=list,
+        description="Matched stop_ids from GTFS stops.txt",
+    )
 
     # Agent 7: Power Grid Autonomy (power_grid)
     discom_provider: Optional[str] = None  # e.g., "BRPL", "BYPL", "TPDDL", "NDMC"
