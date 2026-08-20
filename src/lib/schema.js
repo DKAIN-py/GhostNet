@@ -1,0 +1,16 @@
+import { SOCKET_EVENTS, ALL_AGENT_IDS, ANOMALY_LEVELS, CITY_SEVERITY_LEVELS, CITY_ROOT_CAUSE_DOMAINS } from "./constants.js";
+import { SECTORS, SECTOR_BY_ID } from "./sectors.js";
+
+export {
+  SOCKET_EVENTS,
+  ALL_AGENT_IDS,
+  ANOMALY_LEVELS,
+  CITY_SEVERITY_LEVELS,
+  CITY_ROOT_CAUSE_DOMAINS,
+  SECTORS,
+  SECTOR_BY_ID
+};
+
+export const AGENT_META = ALL_AGENT_IDS.map((agentId) => ({
+  agentId,
+}));
