@@ -25,8 +25,10 @@ start_server() {
         nohup $SERVER_BIN \
             -m "$MODEL_PATH" \
             -ngl 99 \
-            -c 4096 \
+            -c 8188 \
+            -n 4096 \
             --reasoning-budget 0 \
+            -np 1 \
             -fa on \
             --host 0.0.0.0 \
             --port 8080 \

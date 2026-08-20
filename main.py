@@ -155,8 +155,6 @@ async def master_lifespan(app: FastAPI):
         http_client=http_client,
     )
 
-    # Start CascadeEngine background 30-min evaluation loop
-    await cascade_engine.start()
 
     # 4. Instantiate and start all agent nodes across ALL sectors
     for sector_config in ALL_SECTORS:
@@ -164,17 +162,21 @@ async def master_lifespan(app: FastAPI):
             curr_agent = AgentClass(
                 config=sector_config,
                 sio=sio,
-                poll_interval=POLL_INTERVAL_SEC,
+                poll_interval=int(POLL_INTERVAL_SEC) if POLL_INTERVAL_SEC is not None else 30,
                 store=sector_store,
             )
             await curr_agent.start()
             active_agents.append(curr_agent)
+            await asyncio.sleep(0)
 
     log.info(
         "Successfully booted %d agent nodes across %d sectors.",
         len(active_agents),
         len(ALL_SECTORS),
     )
+
+    # Start CascadeEngine background 30-min evaluation loop
+    await cascade_engine.start()
 
     yield  # Application serving HTTP traffic
 
@@ -261,3 +263,16 @@ async def trigger_cascade_evaluation():
         "message": "Cascade evaluation cycle initiated asynchronously.",
         "timestamp": store_snapshot if (store_snapshot := await sector_store.snapshot()) else {}
     }
+
+@app.get("/debug/tasks")
+async def debug_tasks():
+    tasks = asyncio.all_tasks()
+    return [
+        {
+            "name": t.get_name(),
+            "done": t.done(),
+            "cancelled": t.cancelled(),
+            "exception": str(t.exception()) if t.done() and not t.cancelled() else None
+        }
+        for t in tasks
+    ]
