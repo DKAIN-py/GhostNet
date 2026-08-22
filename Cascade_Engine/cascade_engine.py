@@ -101,7 +101,7 @@ class QwenLLMClient:
             )
             response.raise_for_status()
 
-            print(response)
+            # print(response)
             res_json = response.json()
 
             choice = res_json["choices"][0]
