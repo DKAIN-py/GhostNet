@@ -9,6 +9,7 @@ export const SOCKET_EVENTS = Object.freeze({
   AGENT_COMMS: "agent-comms",
   CITY_INCIDENT: "city-incident",
   CITY_INCIDENT_CLEAR: "city-incident-clear",
+  DATA_INTEGRITY: "data-integrity",
 });
 
 export const ALL_AGENT_IDS = Object.freeze([

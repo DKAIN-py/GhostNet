@@ -468,4 +468,123 @@ describe("GHOSTNET Phase 1 Backend Acceptance Tests", () => {
     assert.strictEqual(ack.error, "ValidationError");
     assert.strictEqual(sectors.size, 0, "Memory store must not be mutated on failed socket validation");
   });
+
+  it("11. POST /api/demo/data-integrity rejects incomplete signal, emits 'data-integrity', does not emit 'agent-signal', and preserves live state", async () => {
+    // 1. Seed an existing valid state
+    const initialSignal = {
+      sectorId: "DEL_EAST_LN",
+      district: "East Delhi",
+      agentId: "smog_dispersion",
+      domain: "environment",
+      isLiveAnchor: true,
+      healthScore: 72,
+      anomalyLevel: "nominal",
+      signal: "Nominal air quality",
+      location: { placeName: "Vikas Marg", lat: 28.6304, lng: 77.2777, radiusMeters: 500 },
+      metrics: {
+        pm25: 45, pm10: 70, aqi: 75, windSpeedKmh: 12, windDirectionDeg: 280, visibilityMeters: 3000, stagnationIndex: 0.15
+      },
+      timestamp: "2026-08-22T09:00:00Z",
+    };
+    await postJson("/agent-signal", initialSignal);
+    assert.strictEqual(sectors.get("DEL_EAST_LN")?.get("smog_dispersion")?.healthScore, 72);
+
+    // 2. Listen for 'data-integrity' event and ensure NO 'agent-signal' is emitted
+    const integrityPromise = waitForSocketEvent("data-integrity");
+    const noAgentSignalPromise = assertNoSocketEvent("agent-signal", 300);
+
+    // 3. Trigger demo data-integrity challenge
+    const res = await postJson("/api/demo/data-integrity", {
+      type: "incomplete",
+      agentId: "smog_dispersion",
+      sectorId: "DEL_EAST_LN"
+    });
+
+    await noAgentSignalPromise;
+    const emittedIntegrity = await integrityPromise;
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.rejected, true);
+    assert.strictEqual(res.body.demoType, "incomplete");
+
+    // 4. Verify data-integrity event payload conforms strictly to contract
+    assert.strictEqual(emittedIntegrity.status, "degraded");
+    assert.strictEqual(emittedIntegrity.type, "incomplete");
+    assert.strictEqual(emittedIntegrity.sectorId, "DEL_EAST_LN");
+    assert.strictEqual(emittedIntegrity.agentId, "smog_dispersion");
+    assert.ok(typeof emittedIntegrity.reason === "string" && emittedIntegrity.reason.length > 0);
+    assert.ok(emittedIntegrity.timestamp);
+
+    // 5. CRITICAL STATE RULE: Live state MUST NOT be mutated or wiped
+    const currentStored = sectors.get("DEL_EAST_LN")?.get("smog_dispersion");
+    assert.ok(currentStored, "Existing valid state must not be deleted");
+    assert.strictEqual(currentStored.healthScore, 72, "healthScore must remain intact at 72");
+  });
+
+  it("12. POST /api/demo/data-integrity supports 'invalid' and 'inconsistent' failure types", async () => {
+    // Test type="invalid"
+    const integrityPromiseInvalid = waitForSocketEvent("data-integrity");
+    const resInvalid = await postJson("/api/demo/data-integrity", {
+      type: "invalid",
+      agentId: "smog_dispersion",
+      sectorId: "DEL_EAST_LN"
+    });
+    const emittedInvalid = await integrityPromiseInvalid;
+
+    assert.strictEqual(resInvalid.status, 200);
+    assert.strictEqual(emittedInvalid.type, "invalid");
+    assert.strictEqual(emittedInvalid.status, "degraded");
+    assert.ok(emittedInvalid.reason.includes("healthScore") || emittedInvalid.reason.includes("pm25"));
+
+    // Test type="inconsistent"
+    const integrityPromiseInconsistent = waitForSocketEvent("data-integrity");
+    const resInconsistent = await postJson("/api/demo/data-integrity", {
+      type: "inconsistent",
+      agentId: "smog_dispersion",
+      sectorId: "DEL_EAST_LN"
+    });
+    const emittedInconsistent = await integrityPromiseInconsistent;
+
+    assert.strictEqual(resInconsistent.status, 200);
+    assert.strictEqual(emittedInconsistent.type, "inconsistent");
+    assert.strictEqual(emittedInconsistent.status, "degraded");
+    assert.ok(emittedInconsistent.reason.includes("Domain mismatch") || emittedInconsistent.reason.includes("Missing required metric"));
+  });
+
+  it("13. Normal valid agent-signal updates state normally after a data-integrity event", async () => {
+    // Trigger data integrity rejection
+    await postJson("/api/demo/data-integrity", {
+      type: "incomplete",
+      agentId: "smog_dispersion",
+      sectorId: "DEL_EAST_LN"
+    });
+
+    // Send valid recovery signal from normal AI agent
+    const recoverySignal = {
+      sectorId: "DEL_EAST_LN",
+      district: "East Delhi",
+      agentId: "smog_dispersion",
+      domain: "environment",
+      isLiveAnchor: true,
+      healthScore: 88,
+      anomalyLevel: "nominal",
+      signal: "Recovered clean telemetry",
+      location: { placeName: "Vikas Marg", lat: 28.6304, lng: 77.2777, radiusMeters: 500 },
+      metrics: {
+        pm25: 30, pm10: 50, aqi: 55, windSpeedKmh: 15, windDirectionDeg: 270, visibilityMeters: 4000, stagnationIndex: 0.10
+      },
+      timestamp: "2026-08-22T09:35:00Z",
+    };
+
+    const recoverySocketPromise = waitForSocketEvent("agent-signal");
+    const res = await postJson("/agent-signal", recoverySignal);
+
+    assert.strictEqual(res.status, 200);
+    const emittedRecovery = await recoverySocketPromise;
+    assert.deepStrictEqual(emittedRecovery, recoverySignal);
+
+    // Verify state store was updated to new healthScore
+    assert.strictEqual(sectors.get("DEL_EAST_LN")?.get("smog_dispersion")?.healthScore, 88);
+  });
 });

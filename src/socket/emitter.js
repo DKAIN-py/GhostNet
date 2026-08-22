@@ -44,3 +44,9 @@ export function emitCityIncidentClear(io, clearPayload = {}) {
   io.emit("city-cascade-clear", clearPayload);
   io.emit("city_cascade_clear", clearPayload);
 }
+
+export function emitDataIntegrity(io, integrityPayload) {
+  if (!io) return;
+  console.log(`[DATA INTEGRITY EMIT] Emitted [data-integrity] for sector ${integrityPayload?.sectorId} (${integrityPayload?.agentId}): ${integrityPayload?.reason}`);
+  io.emit(SOCKET_EVENTS.DATA_INTEGRITY, integrityPayload);
+}

@@ -8,6 +8,7 @@ import { createStateRouter } from "./src/routes/stateRoutes.js";
 import { createTestRouter } from "./src/routes/testRoutes.js";
 import { createReplayRouter } from "./src/routes/replayRoutes.js";
 import { createMeshRouter } from "./src/routes/meshRoutes.js";
+import { createDemoRouter } from "./src/routes/demoRoutes.js";
 
 /**
  * CORS Origin Matcher:
@@ -49,7 +50,7 @@ export function createApp(io = null) {
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true }));
 
-  // Mount routes (NO /api prefix)
+  // Mount routes
   app.use(createSignalRouter(io));
   app.use(createCascadeRouter(io));
   app.use(createCommsRouter(io));
@@ -58,6 +59,7 @@ export function createApp(io = null) {
   app.use(createTestRouter(io));
   app.use(createReplayRouter());
   app.use(createMeshRouter());
+  app.use(createDemoRouter(io));
 
   // Global 404 Handler
   app.use((req, res) => {
