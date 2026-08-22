@@ -13,7 +13,7 @@ import { SECTORS, SECTOR_BY_ID, nearestSectors, distanceBetween } from "../lib/s
 /* -------------------------------------------------------------------------- */
 
 Cesium.Ion.defaultAccessToken =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiMmM3NTFlZi1lNTcwLTRiZDctYWYyZC01MDU0YTM5NTliOWEiLCJpZCI6NDAwMzI1LCJpYXQiOjE3NzI5ODQ2NzR9.S59OjXYB9b9pKxOaGd_O8po-19bDW1sRQn4WsdgG4ps";
+import.meta.env.VITE_CESIUM_API;
 
 /* -------------------------------------------------------------------------- */
 /* NOTE ON ROAD GEOMETRY                                                      */
