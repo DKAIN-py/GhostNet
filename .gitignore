@@ -106,3 +106,28 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.env
+
+# python testing
+unistat.py
+test.py
+
+# internal doc
+context.md
+*.html
+
+# mock backend
+*.js
+*.json
+node_modules
