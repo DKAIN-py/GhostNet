@@ -155,7 +155,11 @@ async def master_lifespan(app: FastAPI):
         http_client=http_client,
     )
 
+    def _store_city_cascade(payload: dict) -> None:
+        global _last_city_cascade
+        _last_city_cascade = payload
 
+    cascade_engine.set_city_cascade_callback(_store_city_cascade)
     # 4. Instantiate and start all agent nodes across ALL sectors
     for sector_config in ALL_SECTORS:
         for AgentClass in ALL_AGENT_CLASSES:
@@ -221,6 +225,7 @@ app = FastAPI(
 # HTTP ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.get("/health", tags=["System"])
 async def health_check():
     """Returns real-time health metrics of all components."""
@@ -276,3 +281,172 @@ async def debug_tasks():
         }
         for t in tasks
     ]
+
+"""
+AutoNet — Chat Endpoint (Single Session)
+=========================================
+One global conversation history — no accounts, no session IDs.
+Context is built server-side from live SectorStateStore.
+Frontend just sends the message string, nothing else.
+"""
+
+from collections import deque
+from datetime import datetime, timezone
+
+from fastapi import Body
+
+# Single global conversation history — capped at 20 messages (10 turns)
+_conversation_history: deque = deque(maxlen=20)
+_last_city_cascade: dict | None = None
+
+async def _build_system_prompt() -> str:
+    snapshot      = await sector_store.snapshot()
+    active_alerts = await sector_store.get_active_alerts()
+    all_sectors   = snapshot.get("sectors", [])
+    now           = datetime.now(timezone.utc).strftime("%d %B %Y, %H:%M UTC")
+
+    # ── Overall city status ───────────────────────────────────────────────────
+    avg   = snapshot['averageScore']
+    count = snapshot['alertingCount']
+    total = snapshot['totalSectors']
+
+    if count == 0:
+        overall = "All sectors are operating normally with no active emergencies."
+    elif count <= 3:
+        overall = f"{count} sectors are currently in alert. The rest of the city is stable."
+    elif count <= 8:
+        overall = f"{count} out of {total} sectors are in alert. The situation is elevated city-wide."
+    else:
+        overall = f"CRITICAL — {count} out of {total} sectors are in active cascade alert. City-wide emergency conditions."
+
+    # ── Active alerts in plain English ────────────────────────────────────────
+    if active_alerts:
+        alert_blocks = []
+        for r in active_alerts:
+            alert_blocks.append(
+                f"- {r.district} ({r.sector_id}): Health score is {r.health_score} out of 100. "
+                f"The {r.agent_id.replace('_', ' ')} agent is reporting: {r.signal}. "
+                f"Current reading: {r.metric_value}."
+            )
+        alerts_text = "\n".join(alert_blocks)
+    else:
+        alerts_text = "No sectors are currently in cascade alert."
+
+    # ── All sectors in plain English grouped by district ─────────────────────
+    by_district: dict[str, list] = {}
+    for s in all_sectors:
+        by_district.setdefault(s.get("district", "Unknown"), []).append(s)
+
+    district_blocks = []
+    for district, sectors in sorted(by_district.items()):
+        worst = min(sectors, key=lambda x: x["healthScore"])
+        lines = []
+        for s in sorted(sectors, key=lambda x: x["healthScore"]):
+            status = (
+                "CRITICAL"  if s["healthScore"] < 35 else
+                "WARNING"   if s["healthScore"] < 65 else
+                "normal"
+            )
+            sig = s.get("signal", "")
+            lines.append(
+                f"  - {s['sectorId']}: {status} (score {s['healthScore']}/100)"
+                + (f" — {sig[:100]}" if sig else "")
+            )
+        district_blocks.append(f"{district}:\n" + "\n".join(lines))
+
+    all_sectors_text = "\n\n".join(district_blocks)
+
+    # After the active alerts block, add:
+    if _last_city_cascade:
+        cc = _last_city_cascade
+        city_cascade_text = (
+            f"A city-wide cascade incident is active (ID: {cc.get('incidentId', 'unknown')}).\n"
+            f"Severity: {cc.get('citywideSeverity')} | "
+            f"Cascade score: {cc.get('citywideCascadeScore')} | "
+            f"Triggered at: {cc.get('timestamp')}\n"
+            f"Summary: {cc.get('summary')}\n"
+            f"Root cause: {cc.get('rootCauseDomain')}\n"
+            f"Primary threat: {cc['affectedAreas'][0]['affectedBy']['primaryThreat'] if cc.get('affectedAreas') else 'unknown'}\n"
+            f"What to do: {cc['mitigationMeasures']['publicAdvisories'][0]['message'] if cc.get('mitigationMeasures') else 'unknown'}"
+        )
+    else:
+        city_cascade_text = "No city-wide cascade incident is currently active."
+
+    return f"""\
+You are AutoNet Assistant — the voice of Delhi's real-time urban emergency \
+monitoring system called AutoNet. You are talking to someone who may not \
+understand technology, so always speak in simple, clear, conversational English.
+
+TODAY IS {now}.
+
+CURRENT CITY SITUATION:
+{overall}
+Average city health score: {avg} out of 100.
+
+SECTORS CURRENTLY IN ALERT (these need attention right now):
+{alerts_text}
+
+FULL SECTOR STATUS BY DISTRICT (use this to answer questions about specific areas):
+{all_sectors_text}
+
+CITY-WIDE INCIDENT STATUS:
+{city_cascade_text}
+
+HOW TO ANSWER:
+- Use plain conversational English. Do NOT use markdown, bullet points, asterisks, bold, or headers.
+- Write in flowing sentences like you are speaking to someone on a phone call.
+- Be specific. If someone asks about an area, find it in the sector data above and report exactly what is happening there.
+- If an area is fine, say it clearly and confidently. Do not hedge unnecessarily.
+- Maximum 3 to 4 sentences per answer.
+- Never mention sector IDs like DEL_CENTRAL_CP to the user — translate them to place names like Connaught Place, Central Delhi.
+- Never invent or guess data. If something is not in the data above, say you do not have that information right now.
+- Do not use phrases like "Based on the data" or "According to telemetry". Just answer directly.\
+"""
+
+
+@app.post("/api/chat", tags=["Chat"])
+async def chat(body: dict = Body(...)):
+    """
+    Request : { "message": "Which areas are critical right now?" }
+    Response: { "reply": "..." }
+    """
+    message = body.get("message", "").strip()
+    if not message:
+        return {"reply": "Ask me anything about Delhi's current city status."}
+
+    system_prompt = await _build_system_prompt()
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(list(_conversation_history))
+    messages.append({"role": "user", "content": message})
+
+    try:
+        response = await http_client.post(
+            "http://localhost:8080/v1/chat/completions",
+            json={
+                "model"      : "qwen2.5-coder-7b-instruct",
+                "max_tokens" : 1024,
+                "temperature": 0.3,
+                "top_p"      : 0.9,
+                "messages"   : messages,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        reply = response.json()["choices"][0]["message"]["content"].strip()
+
+    except Exception as exc:
+        log.error("Chat LLM call failed: %s", exc)
+        reply = "Analysis engine is busy. Check the live dashboard for current status."
+
+    _conversation_history.append({"role": "user",      "content": message})
+    _conversation_history.append({"role": "assistant", "content": reply})
+
+    return {"reply": reply}
+
+
+# @app.delete("/api/chat/history", tags=["Chat"])
+# async def clear_chat_history():
+#     """Reset conversation. Call when user closes the chat bubble."""
+#     _conversation_history.clear()
+#     return {"status": "cleared"}

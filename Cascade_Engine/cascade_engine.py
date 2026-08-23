@@ -152,6 +152,7 @@ class CascadeEngine:
         self._loop_task    : asyncio.Task | None = None
         self._incident_seq : int = 0
         self._semaphore    = asyncio.Semaphore(max_concurrent_llm_calls)
+        self._on_city_cascade: callable | None = None
 
         log.info(
             "CascadeEngine ready. interval=%dmin | unhealthy<%d | recovery>%d | cityTrigger=%d | maxParallelLLM=%d",
@@ -161,6 +162,9 @@ class CascadeEngine:
             CITY_CASCADE_TRIGGER,
             max_concurrent_llm_calls,
         )
+
+    def set_city_cascade_callback(self, callback: callable) -> None:
+        self._on_city_cascade = callback
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -410,6 +414,8 @@ class CascadeEngine:
         }
 
         await self._emit(EVENT_CITY_CASCADE, payload)
+        if self._on_city_cascade:
+            self._on_city_cascade(payload)
 
         log.warning(
             "City cascade emitted → %s | severity=%s | score=%.2f",
