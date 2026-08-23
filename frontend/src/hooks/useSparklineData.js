@@ -1,31 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useGhostnet } from '../context/GhostnetContext';
 
 const HISTORY_LEN = 10;
 
-// Keeps the last N healthScore readings per (sectorId, agentId) pair, so any
-// signal in the 468-signal mesh can get a sparkline, not just 3 fixed agents.
-// Consumers key into the returned object with `${sectorId}:${agentId}`.
 export function useSparklineData() {
   const { allSignals } = useGhostnet();
   const [history, setHistory] = useState({});
 
   useEffect(() => {
+    if (!allSignals?.length) return;
+
     setHistory((prev) => {
       const updated = { ...prev };
-      (allSignals || []).forEach((sig) => {
-        if (!sig) return;
+
+      allSignals.forEach((sig) => {
+        if (!sig || typeof sig.healthScore !== 'number') return;
+
         const key = `${sig.sectorId}:${sig.agentId}`;
-        const current = prev[key] ?? [];
-        const next = [...current, sig.healthScore].slice(-HISTORY_LEN);
-        // Skip the update if nothing actually changed, to avoid a render
-        // loop when allSignals re-renders with identical values.
-        if (current[current.length - 1] !== sig.healthScore) {
-          updated[key] = next;
-        } else if (!updated[key]) {
-          updated[key] = next;
+        const current = prev[key];
+
+        // First backend signal:
+        // initialize a straight line using the current score.
+        if (!current || current.length === 0) {
+          updated[key] = Array(HISTORY_LEN).fill(sig.healthScore);
+          return;
+        }
+
+        // Only append when the backend actually gives us
+        // a different reading.
+        const last = current[current.length - 1];
+
+        if (last !== sig.healthScore) {
+          updated[key] = [
+            ...current,
+            sig.healthScore,
+          ].slice(-HISTORY_LEN);
         }
       });
+
       return updated;
     });
   }, [allSignals]);

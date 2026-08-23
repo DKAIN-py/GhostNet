@@ -5,10 +5,12 @@ import { AGENT_META, ALL_AGENT_IDS } from '../../lib/schema';
 
 const NAV = [
   { to: '/',         label: 'DASHBOARD',    icon: '⬛' },
+  { to: '/sectors',  label: 'Sectors',      icon: '⬛' },
   { to: '/nervous',  label: 'NERVOUS SYS',  icon: '◎' },
   { to: '/citymap',  label: 'CITY MAP',     icon: '⬢' },
   { to: '/replay',   label: 'REPLAY',       icon: '▶'  },
   { to: '/cascade',  label: 'CASCADE LOG',  icon: '▲'  },
+  { to: '/cortex',  label: 'Cortex',  icon: '⬢'  },
 ];
 
 export default function Sidebar() {

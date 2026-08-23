@@ -30,7 +30,8 @@ export function useSocket(
   onCascadeClear,
   onAgentComms,
   onCityIncident,
-  onCityIncidentClear
+  onCityIncidentClear,
+  onDataIntegrity
 ) {
   const socketRef = useRef(null);
 
@@ -207,6 +208,7 @@ export function useSocket(
       }
     );
 
+
     // ==========================================================
     // CITY INCIDENT CLEAR (NEW)
     // ==========================================================
@@ -219,6 +221,32 @@ export function useSocket(
         );
 
         onCityIncidentClear?.();
+      }
+    );
+
+        // ==========================================================
+    // DATA INTEGRITY (NEW)
+    //
+    // Fired by the backend's demo endpoint when it rejects a
+    // malformed/incomplete signal. Purely an integrity event — never
+    // touches signals/sectors state. Recovery is driven entirely by the
+    // next real, valid agent-signal (handled in GhostnetContext), not
+    // here or by any timer.
+    //
+    // Using the literal event name rather than SOCKET_EVENTS.* since
+    // that enum lives in lib/schema.js — add a DATA_INTEGRITY key there
+    // yourself if you want to swap this to SOCKET_EVENTS.DATA_INTEGRITY.
+    // ==========================================================
+
+    socket.on(
+      'data-integrity',
+      (data) => {
+        console.warn(
+          '[GHOSTNET] DATA INTEGRITY:',
+          data
+        );
+
+        onDataIntegrity?.(data);
       }
     );
 
@@ -244,6 +272,7 @@ export function useSocket(
     onAgentComms,
     onCityIncident,
     onCityIncidentClear,
+    onDataIntegrity,
   ]);
 
   return {

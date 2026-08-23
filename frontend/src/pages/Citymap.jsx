@@ -9,1451 +9,1355 @@ import { T, getSeverityStyle } from "../lib/theme";
 import { AGENT_META } from "../lib/schema";
 import { SECTORS, SECTOR_BY_ID, nearestSectors, distanceBetween } from "../lib/sectors";
 
-/* -------------------------------------------------------------------------- */
-/* Cesium                                                                     */
-/* -------------------------------------------------------------------------- */
-
+/* ─────────────────────────────────────────────────────── */
+/* Cesium token                                            */
+/* ─────────────────────────────────────────────────────── */
 Cesium.Ion.defaultAccessToken =
 import.meta.env.VITE_CESIUM_API;
 
-/* -------------------------------------------------------------------------- */
-/* NOTE ON ROAD GEOMETRY                                                      */
-/*                                                                             */
-/* We never fabricate road lines as "truth". A sector's location is an area  */
-/* centroid, not a snapped road segment. roadPositions() below prefers real  */
-/* backend geometry (signal.geometry / signal.location.geometry) the moment  */
-/* it's present — a LineString from an OSRM/Mapbox map-matching call — and   */
-/* only falls back to a deterministic corridor shape from the centroid when  */
-/* no real geometry exists yet. Same pattern for polygons via geometryPolygon.*/
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────────────────────────────────────── */
+/* Delhi boundary                                          */
+/* ─────────────────────────────────────────────────────── */
+const DELHI_BOUNDARY = [
+  77.0645,28.8825, 77.1200,28.9200, 77.2000,28.9500, 77.3200,28.9100,
+  77.3950,28.8500, 77.4500,28.7800, 77.5000,28.7200, 77.5200,28.6500,
+  77.5100,28.5700, 77.4800,28.5000, 77.4200,28.4400, 77.3500,28.4000,
+  77.2600,28.3800, 77.1800,28.3900, 77.0900,28.4200, 77.0000,28.4800,
+  76.9200,28.5500, 76.8500,28.6200, 76.8700,28.7000, 76.9200,28.7800,
+  76.9800,28.8300, 77.0645,28.8825,
+];
 
-/* -------------------------------------------------------------------------- */
-/* Badge accent colors + glyphs (used for the always-on pin markers)         */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────────────────────────────────────── */
+/* Delhi default camera                                    */
+/* ─────────────────────────────────────────────────────── */
+const DELHI_VIEW = { lon: 77.209, lat: 28.6139, height: 14000 };
 
+/* ─────────────────────────────────────────────────────── */
+/* Agent palette                                           */
+/* ─────────────────────────────────────────────────────── */
 const AGENT_COLOR = {
-  smog_dispersion: "#C1443A",
-  waterlogging_hydrology: "#2E7DB8",
-  thermal_stress: "#D9791E",
-  transit_fleet: "#B8862E",
-  road_corridor: "#A66A1E",
-  metro_transit: "#7A5CC2",
-  power_grid: "#B39423",
-  industrial_hazard: "#B0301E",
-  hospital_capacity: "#B8355F",
-  emergency_dispatch: "#B8271E",
-  social_panic: "#8A3FAE",
-  traffic_news: "#A67A1E",
+  smog_dispersion:        "#FF4040",
+  waterlogging_hydrology: "#40A0FF",
+  thermal_stress:         "#FF8800",
+  transit_fleet:          "#FFB800",
+  road_corridor:          "#FF6600",
+  metro_transit:          "#A066FF",
+  power_grid:             "#FFE000",
+  industrial_hazard:      "#FF2020",
+  hospital_capacity:      "#FF4080",
+  emergency_dispatch:     "#FF1030",
+  social_panic:           "#C040FF",
+  traffic_news:           "#FFA000",
 };
 
 const AGENT_GLYPH = {
-  smog_dispersion: "\u2601",        // cloud
-  waterlogging_hydrology: "\u2248", // waves
-  thermal_stress: "\u2600",         // sun
-  transit_fleet: "\uD83D\uDE8C",    // bus
-  road_corridor: "\u2B95",          // arrow
-  metro_transit: "\u24C2",          // circled M
-  power_grid: "\u26A1",             // bolt
-  industrial_hazard: "\u26A0",      // warning triangle
-  hospital_capacity: "\u271A",      // heavy cross
-  emergency_dispatch: "\u260E",     // phone
-  social_panic: "\u203C",           // double exclamation
-  traffic_news: "\u26A7",           // barrier
+  smog_dispersion:        "\u2601",
+  waterlogging_hydrology: "\u2248",
+  thermal_stress:         "\u2600",
+  transit_fleet:          "B",
+  road_corridor:          "\u2B95",
+  metro_transit:          "M",
+  power_grid:             "\u26A1",
+  industrial_hazard:      "\u26A0",
+  hospital_capacity:      "\u271A",
+  emergency_dispatch:     "\u260E",
+  social_panic:           "\u203C",
+  traffic_news:           "\u26A7",
 };
 
-// Zone/shape accent colors for the rich per-agent visualization (shown only
-// for the currently-selected signal in place of its pin).
-const COLORS = {
-  critical: "#FF3030",
-  moderate: "#FFB020",
-  warning: "#FFB020",
-  nominal: "#55D98A",
-  good: "#55D98A",
+/* ─────────────────────────────────────────────────────── */
+/* Cascade colours                                         */
+/* ─────────────────────────────────────────────────────── */
+const CSC_PRIMARY = "#FF2020";
+const CSC_SPREAD  = "#FF8800";
+const CSC_CITY    = "#4499FF";
 
-  smog: "#FF3838",
-  flood: "#168CFF",
-  thermal: "#FF6A00",
-  transit: "#FF9F1C",
-  metro: "#A86CFF",
-  power: "#FFD400",
-  industrial: "#FF2414",
-  hospital: "#FF3E78",
-  emergency: "#FF1744",
-  panic: "#C044FF",
-  traffic: "#FFB000",
-};
+/* ─────────────────────────────────────────────────────── */
+/* Pure helpers                                             */
+/* ─────────────────────────────────────────────────────── */
+function cc(hex, a=1){ return Cesium.Color.fromCssColorString(hex).withAlpha(a); }
+function rgba(hex, a){ const c=hex.replace("#",""), n=parseInt(c,16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function toRad(d){ return d*Math.PI/180; }
+function mToLat(m){ return m/111320; }
+function mToLng(m,lat){ return m/(111320*Math.max(0.15,Math.abs(Math.cos(toRad(lat))))); }
 
-const CASCADE_RED_PRIMARY = "#C41E1E";
-const CASCADE_RED_SPREAD = "#8C1F1F";
+function pos3(loc, h=22){
+  if(!loc||typeof loc.lat!=="number"||typeof loc.lng!=="number") return null;
+  return Cesium.Cartesian3.fromDegrees(loc.lng, loc.lat, h);
+}
 
-function headlineFor(agentId, metrics = {}) {
-  switch (agentId) {
-    case "smog_dispersion": return `AQI ${metrics.aqi ?? "—"}`;
-    case "waterlogging_hydrology": return `${metrics.waterDepthCm ?? "—"}cm depth`;
-    case "thermal_stress": return `${metrics.feelsLikeTempC ?? metrics.ambientTempC ?? "—"}°C feels-like`;
-    case "transit_fleet": return `${Math.round((metrics.stationaryRatio ?? 0) * 100)}% fleet stalled`;
-    case "road_corridor": return `${metrics.congestionLevelPct ?? "—"}% congestion`;
-    case "metro_transit": return `${metrics.platformCapacityPct ?? "—"}% platform`;
-    case "power_grid": return `${metrics.transformerLoadPct ?? "—"}% load`;
-    case "industrial_hazard": return metrics.incidentType && metrics.incidentType !== "none" ? metrics.incidentType.replaceAll("_", " ") : "monitoring";
-    case "hospital_capacity": return `${metrics.icuOccupancyPct ?? "—"}% ICU`;
-    case "emergency_dispatch": return `${metrics.callVolumePerMin ?? "—"} calls/min`;
-    case "social_panic": return `panic ${(metrics.meanRoBERTaPanicScore ?? 0).toFixed(2)}`;
-    case "traffic_news": return metrics.closureSeverity ? metrics.closureSeverity.replaceAll("_", " ") : "advisory";
-    default: return "";
+/* Offset a lat/lng by dx/dy metres — used to separate overlapping pins */
+function offsetLoc(loc, dxM, dyM){
+  if(!loc) return loc;
+  return {
+    ...loc,
+    lat: loc.lat + mToLat(dyM),
+    lng: loc.lng + mToLng(dxM, loc.lat),
+  };
+}
+
+function lbl(s){
+  return s?.location?.placeName||s?.location?.stationName||
+         s?.metrics?.substationName||s?.metrics?.primaryFacilityName||
+         s?.metrics?.corridorName||s?.sectorId||s?.agentId||"—";
+}
+
+function fxEntries(signal){
+  if(!signal) return [];
+  return Object.entries(signal).filter(([k,v])=>k.endsWith("Forecast")&&v&&typeof v==="object");
+}
+
+function sameSignal(a,b){ return a&&b&&a.sectorId===b.sectorId&&a.agentId===b.agentId; }
+
+function isTriggered(cascades, signal){
+  return (cascades||[]).some(c=>{
+    const ag = c.triggeredAgents||c.agentsTriggered||[];
+    const zone = c.primarySectorId===signal.sectorId||(c.spatialSpread||[]).includes(signal.sectorId);
+    return ag.includes(signal.agentId)&&zone;
+  });
+}
+
+function sectorRole(cascades, sectorId){
+  for(const c of (cascades||[])){
+    if(c.primarySectorId===sectorId) return "primary";
+    if((c.spatialSpread||[]).includes(sectorId)) return "spread";
   }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Cities                                                                     */
-/* -------------------------------------------------------------------------- */
-
-const CITIES = {
-  delhi: { name: "Delhi", lon: 77.209, lat: 28.6139, height: 14000 },
-  tokyo: { name: "Tokyo", lon: 139.6917, lat: 35.6895, height: 6000 },
-  assam: { name: "Assam", lon: 91.7362, lat: 26.1445, height: 20000 },
-};
-
-/* -------------------------------------------------------------------------- */
-/* Geo / color helpers                                                        */
-/* -------------------------------------------------------------------------- */
-
-function severityKey(anomalyLevel) {
-  if (anomalyLevel === "critical") return "critical";
-  if (anomalyLevel === "warning" || anomalyLevel === "moderate") return "moderate";
-  return "good";
-}
-
-function severityColor(signal) {
-  return COLORS[signal?.anomalyLevel] || COLORS.good;
-}
-
-function cesiumColor(hex, alpha = 1) {
-  return Cesium.Color.fromCssColorString(hex).withAlpha(alpha);
-}
-
-function hexToRgb(hex) {
-  const clean = hex.replace("#", "");
-  const bigint = parseInt(clean, 16);
-  return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
-}
-
-function hexToRgba(hex, alpha) {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-// Explicit low height, NOT terrain-clamped — clamping every entity to
-// terrain forces continuous resampling every frame and is what breaks
-// smooth camera drag/zoom. A fixed small altitude reads correctly from
-// any normal viewing angle and costs nothing per frame.
-function positionOf(location, height = 22) {
-  if (!location || typeof location.lat !== "number" || typeof location.lng !== "number") {
-    return null;
-  }
-  return Cesium.Cartesian3.fromDegrees(location.lng, location.lat, height);
-}
-
-function labelText(signal) {
-  return (
-    signal?.location?.placeName ||
-    signal?.location?.stationName ||
-    signal?.metrics?.substationName ||
-    signal?.metrics?.primaryFacilityName ||
-    signal?.metrics?.corridorName ||
-    signal?.sectorId ||
-    signal?.agentId ||
-    "UNKNOWN"
-  );
-}
-
-function forecastTitle(key) {
-  return key.replace(/Forecast$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toUpperCase() + " FORECAST";
-}
-
-function forecastEntries(signal) {
-  if (!signal) return [];
-  return Object.entries(signal).filter(([key, value]) => key.endsWith("Forecast") && value && typeof value === "object");
-}
-
-function toRad(deg) { return (deg * Math.PI) / 180; }
-
-function metersToLat(meters) { return meters / 111320; }
-
-function metersToLng(meters, latitude) {
-  const cos = Math.cos(toRad(latitude));
-  return meters / (111320 * Math.max(0.15, Math.abs(cos)));
-}
-
-function triggeredAgent(cascade, signal) {
-  if (!cascade) return false;
-  const agents = cascade.triggeredAgents || cascade.agentsTriggered || [];
-  const inZone =
-    cascade.primarySectorId === signal.sectorId ||
-    (cascade.spatialSpread || []).includes(signal.sectorId);
-  return agents.includes(signal.agentId) && inZone;
-}
-
-function cascadeRoleFor(cascade, sectorId) {
-  if (!cascade) return null;
-  if (cascade.primarySectorId === sectorId) return "primary";
-  if ((cascade.spatialSpread || []).includes(sectorId)) return "spread";
   return null;
 }
 
-function isSameSignal(a, b) {
-  if (!a || !b) return false;
-  return a.sectorId === b.sectorId && a.agentId === b.agentId;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Pulse helpers — used to make cascade zones "breathe" (dark red, up/down). */
-/* Cesium's requestRenderMode only redraws on scene changes, so a separate   */
-/* rAF loop (wired up in CityMap below) keeps calling scene.requestRender()  */
-/* while a cascade is active so these CallbackProperties actually animate.   */
-/* -------------------------------------------------------------------------- */
-
-function pulseNumber(min, max, periodMs = 1400) {
+/* ─────────────────────────────────────────────────────── */
+/* Pulse helpers                                            */
+/* ─────────────────────────────────────────────────────── */
+function pN(mn, mx, p = 1400) {
   return new Cesium.CallbackProperty(() => {
-    const t = (Date.now() % periodMs) / periodMs;
-    const s = (Math.sin(t * Math.PI * 2) + 1) / 2;
-    return min + (max - min) * s;
+    // Quantize time so two properties evaluated during the same
+    // Cesium frame always receive the exact same radius.
+    const now = Math.floor(Date.now() / 50) * 50;
+    const t = (now % p) / p;
+
+    return mn + (mx - mn) * (Math.sin(t * Math.PI * 2) + 1) / 2;
   }, false);
 }
+function pC(hex,mn,mx,p=1400){ return new Cesium.CallbackProperty(()=>{ const t=(Date.now()%p)/p; return cc(hex,mn+(mx-mn)*(Math.sin(t*Math.PI*2)+1)/2); },false); }
+function pM(hex,mn,mx,p=1400){ return new Cesium.ColorMaterialProperty(pC(hex,mn,mx,p)); }
 
-function pulseColor(hex, minAlpha, maxAlpha, periodMs = 1400) {
-  return new Cesium.CallbackProperty(() => {
-    const t = (Date.now() % periodMs) / periodMs;
-    const s = (Math.sin(t * Math.PI * 2) + 1) / 2;
-    return cesiumColor(hex, minAlpha + (maxAlpha - minAlpha) * s);
-  }, false);
+/* ─────────────────────────────────────────────────────── */
+/* Icon cache                                              */
+/* ─────────────────────────────────────────────────────── */
+const IC = new Map();
+const RS = 2;
+
+/* Agent badge — dark bg, glyph, glow */
+function agentIcon(agentId, sev, health, highlighted){
+  const hb = Math.round((health??50)/5)*5;
+  const k = `ag:${agentId}:${sev}:${hb}:${highlighted?1:0}`;
+  if(IC.has(k)) return IC.get(k);
+  const accent = AGENT_COLOR[agentId]||"#FFFFFF";
+  const glyph  = AGENT_GLYPH[agentId]||"\u25CF";
+  const frac   = Math.max(0.04, Math.min(1, 1-hb/100));
+  const sz = 80*RS;
+  const cv = document.createElement("canvas"); cv.width=sz; cv.height=sz;
+  const ctx = cv.getContext("2d"); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+  const cx=sz/2, cy=sz/2, outerR=sz/2-3*RS, rw=6*RS, bgR=outerR-rw-2*RS;
+  // glow
+  const g=ctx.createRadialGradient(cx,cy,bgR*0.4,cx,cy,outerR*1.9);
+  g.addColorStop(0,rgba(accent,highlighted?0.55:0.35)); g.addColorStop(1,rgba(accent,0));
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,outerR*1.9,0,Math.PI*2); ctx.fill();
+  // dark track
+  ctx.beginPath(); ctx.arc(cx,cy,outerR,0,Math.PI*2);
+  ctx.lineWidth=rw; ctx.strokeStyle="rgba(0,0,0,0.85)"; ctx.stroke();
+  // progress arc
+  ctx.beginPath(); ctx.arc(cx,cy,outerR,-Math.PI/2,-Math.PI/2+frac*Math.PI*2);
+  ctx.lineWidth=rw; ctx.strokeStyle=accent; ctx.lineCap="round"; ctx.stroke();
+  // dark badge
+  ctx.beginPath(); ctx.arc(cx,cy,bgR,0,Math.PI*2);
+  ctx.fillStyle="rgba(8,8,8,0.92)"; ctx.fill();
+  ctx.lineWidth=3*RS; ctx.strokeStyle=accent; ctx.stroke();
+  // glyph
+  ctx.fillStyle="#FFFFFF";
+  ctx.font=`bold ${Math.round(bgR*0.95)}px "Segoe UI Symbol","Noto Sans Symbols","Arial",sans-serif`;
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(glyph,cx,cy+1.5*RS);
+  const url=cv.toDataURL(); IC.set(k,url); return url;
 }
 
-function pulseMaterial(hex, minAlpha, maxAlpha, periodMs = 1400) {
-  return new Cesium.ColorMaterialProperty(pulseColor(hex, minAlpha, maxAlpha, periodMs));
+/* SVG teardrop cascade pin — rendered as data URL */
+function cascadePin(type, isSelected=false){
+  const k = `cp:${type}:${isSelected?1:0}`;
+  if(IC.has(k)) return IC.get(k);
+
+  const color = type==="primary" ? CSC_PRIMARY : type==="spread" ? CSC_SPREAD : CSC_CITY;
+  const label = type==="primary" ? "!" : type==="spread" ? "\u25CF" : "C";
+
+  // SVG teardrop — proper Google-maps-style shape
+  const W=48, H=64;
+  const r = 20; // circle radius
+  const cx = W/2, cy = r+2; // circle centre
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <defs>
+      <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <!-- teardrop path -->
+    <path d="M${cx},${cy-r} A${r},${r} 0 1 1 ${cx-0.01},${cy-r} L${cx},${H-2} Z"
+      fill="rgba(6,6,6,0.90)" stroke="${color}" stroke-width="${isSelected?3.5:2.5}" filter="url(#glow)"/>
+    <!-- inner coloured circle -->
+    <circle cx="${cx}" cy="${cy}" r="${r*0.52}" fill="${color}" opacity="0.95"/>
+    <!-- label -->
+    <text x="${cx}" y="${cy+1}" text-anchor="middle" dominant-baseline="middle"
+      fill="white" font-family="Arial,sans-serif" font-size="${r*0.7}" font-weight="bold">${label}</text>
+  </svg>`;
+
+  const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  IC.set(k,url); return url;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Sector boundaries — hexagon per sector, radius derived from the real       */
-/* distance to that sector's nearest neighbor, so 39 boundaries roughly tile  */
-/* the mesh without a GIS boundary dataset. Computed once at module load.    */
-/* -------------------------------------------------------------------------- */
-
-const SECTOR_BOUNDARY_RADIUS = SECTORS.reduce((acc, sector) => {
-  const [nearestId] = nearestSectors(sector.sectorId, 1);
-  const distKm = nearestId ? distanceBetween(sector.sectorId, nearestId) : 6;
-  const meters = (distKm * 1000) / 2;
-  // Deliberately small relative to inter-sector spacing (~0.34x half-distance)
-  // so neighboring hexagons read as distinct cells instead of stacking into
-  // an illegible overlap wherever sectors happen to sit close together.
-  acc[sector.sectorId] = Math.min(1800, Math.max(500, meters * 0.34));
+/* ─────────────────────────────────────────────────────── */
+/* Sector hexagons — only in cascade layers                */
+/* ─────────────────────────────────────────────────────── */
+const SEC_R = SECTORS.reduce((acc,s)=>{
+  const [nid] = nearestSectors(s.sectorId,1);
+  const dk = nid ? distanceBetween(s.sectorId,nid) : 6;
+  acc[s.sectorId] = Math.min(1800, Math.max(500,(dk*1000)/2*0.34));
   return acc;
-}, {});
+},{});
 
-function hexagonPoints(center, radiusMeters, rotationDeg = 0) {
-  const pts = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = toRad(rotationDeg + i * 60);
-    const dLat = metersToLat(radiusMeters * Math.cos(angle));
-    const dLng = metersToLng(radiusMeters * Math.sin(angle), center.lat);
-    pts.push(center.lng + dLng, center.lat + dLat);
+function hexPts(c,r,rot=0){
+  const pts=[];
+  for(let i=0;i<6;i++){
+    const a=toRad(rot+i*60);
+    pts.push(c.lng+mToLng(r*Math.sin(a),c.lat), c.lat+mToLat(r*Math.cos(a)));
   }
   return pts;
 }
 
-function SectorBoundary({ sector, health, cascadeRole }) {
-  const worst = health?.criticalCount > 0 ? "critical" : health?.warningCount > 0 ? "moderate" : "good";
-  const style = getSeverityStyle(worst);
-  const baseColor = style.bg || style.text;
-  const radiusMeters = SECTOR_BOUNDARY_RADIUS[sector.sectorId] || 1800;
-  const points = hexagonPoints(sector, radiusMeters);
+function CascadeHex({sector, role, isSelected}){
+  const r = SEC_R[sector.sectorId]||1800;
+  const pts = hexPts(sector,r);
+  const fillColor = role==="primary" ? CSC_PRIMARY : role==="spread" ? CSC_SPREAD : CSC_CITY;
+  const fillAlpha = role==="primary" ? 0.38 : 0.22;
+  const period    = role==="primary" ? 900 : 1400;
+  return (
+    <Entity polygon={{
+      hierarchy: Cesium.Cartesian3.fromDegreesArray(pts),
+      height: 3,
+      material: isSelected ? pM(fillColor,fillAlpha*0.6,fillAlpha,period) : cc(fillColor,fillAlpha*0.5),
+      outline: true,
+      outlineColor: isSelected ? pC(fillColor,0.55,1.0,period) : cc(fillColor,0.75),
+      outlineWidth: role==="primary" ? 4 : 2.5,
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(700,60000),
+    }}/>
+  );
+}
 
-  const isCascade = cascadeRole === "primary" || cascadeRole === "spread";
-  const cascadeHex = cascadeRole === "primary" ? CASCADE_RED_PRIMARY : CASCADE_RED_SPREAD;
-  const period = cascadeRole === "primary" ? 1000 : 1500;
-
-  const fillMaterial = isCascade
-    ? pulseMaterial(cascadeHex, cascadeRole === "primary" ? 0.18 : 0.10, cascadeRole === "primary" ? 0.34 : 0.18, period)
-    : cesiumColor(baseColor, worst === "good" ? 0.015 : worst === "moderate" ? 0.035 : 0.06);
-
-  const outlineColorVal = isCascade
-    ? pulseColor(cascadeHex, 0.5, 0.95, period)
-    : cesiumColor(baseColor, worst === "good" ? 0.18 : worst === "moderate" ? 0.35 : 0.55);
-
-  // Hidden inside ~700m so the mesh never fights a zoomed-in selected zone
-  // for attention; still visible at every normal city-browsing distance.
-  const meshVisibility = new Cesium.DistanceDisplayCondition(700, 60000);
-
+/* ─────────────────────────────────────────────────────── */
+/* Delhi boundary ring                                     */
+/* ─────────────────────────────────────────────────────── */
+function DelhiBoundary(){
   return (
     <Entity>
-      <Entity
-        polygon={{
-          hierarchy: Cesium.Cartesian3.fromDegreesArray(points),
-          height: 3,
-          material: fillMaterial,
-          outline: true,
-          outlineColor: outlineColorVal,
-          outlineWidth: isCascade ? (cascadeRole === "primary" ? 3 : 2) : (worst === "critical" ? 1.8 : worst === "moderate" ? 1.2 : 0.75),
-          distanceDisplayCondition: meshVisibility,
-        }}
-      />
-      <Entity
-        position={positionOf(sector, 3)}
-        label={{
-          text: sector.name.toUpperCase(),
-          font: `8px ${T.font.mono}`,
-          fillColor: isCascade ? cesiumColor("#FFD9D9") : cesiumColor(T.text.muted),
-          outlineColor: cesiumColor(T.bg.root),
-          outlineWidth: 2,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          distanceDisplayCondition: meshVisibility,
-          scaleByDistance: new Cesium.NearFarScalar(500, 1, 16000, 0.35),
-          translucencyByDistance: new Cesium.NearFarScalar(2500, 0.9, 24000, 0.05),
-        }}
-      />
+      <Entity polyline={{positions:Cesium.Cartesian3.fromDegreesArray(DELHI_BOUNDARY),width:9,material:new Cesium.PolylineGlowMaterialProperty({glowPower:0.4,color:cc("#FFD700",0.85)}),clampToGround:true}}/>
+      <Entity polyline={{positions:Cesium.Cartesian3.fromDegreesArray(DELHI_BOUNDARY),width:2.5,material:cc("#FFE87C",1.0),clampToGround:true}}/>
     </Entity>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Icon generation — canvas -> data URL, memoized.                            */
-/*                                                                             */
-/* RENDER_SCALE supersamples every icon at 2x the pixel size it's actually    */
-/* displayed at (Cesium billboard width/height stay the same as before).     */
-/* Cesium scales billboard textures down to the requested display size, and  */
-/* scaling a 1:1 canvas down still leaves soft/aliased edges on most GPUs —  */
-/* rendering at 2x and letting Cesium's minification filter downsample it is */
-/* what actually produces crisp icons instead of the blurry stamped look.    */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────────────────────────────────────── */
+/* AnomalyBadge                                            */
+/* Overlapping pins at same sector offset by index        */
+/* ─────────────────────────────────────────────────────── */
+function AnomalyBadge({signal, highlighted, dimmed, onClick, offsetIndex=0}){
+  const sev = signal.anomalyLevel==="critical"?"critical":signal.anomalyLevel==="warning"?"warning":"nominal";
+  const size = sev==="critical"?52:sev==="warning"?42:30;
 
-const iconCache = new Map();
-const RENDER_SCALE = 2;
-
-function buildBadgeIcon(agentId, severity, healthScore, highlighted) {
-  const healthBucket = Math.round((healthScore ?? 50) / 5) * 5;
-  const key = `badge:${agentId}:${severity}:${healthBucket}:${highlighted ? 1 : 0}`;
-  if (iconCache.has(key)) return iconCache.get(key);
-
-  const accent = AGENT_COLOR[agentId] || T.text.secondary;
-  const glyph = AGENT_GLYPH[agentId] || "\u25CF";
-  const severityFrac = Math.max(0.04, Math.min(1, 1 - healthBucket / 100));
-
-  const size = 112 * RENDER_SCALE;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  const cx = size / 2;
-  const cy = size / 2;
-  const outerR = size / 2 - 6 * RENDER_SCALE;
-  const ringWidth = 6 * RENDER_SCALE;
-  const badgeR = outerR - ringWidth - 4 * RENDER_SCALE;
-
-  if (highlighted) {
-    const grad = ctx.createRadialGradient(cx, cy, badgeR * 0.6, cx, cy, outerR * 1.6);
-    grad.addColorStop(0, hexToRgba(accent, 0.42));
-    grad.addColorStop(1, hexToRgba(accent, 0));
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cx, cy, outerR * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // severity ring gauge — track + fill proportional to (1 - healthScore/100)
-  ctx.beginPath();
-  ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
-  ctx.lineWidth = ringWidth;
-  ctx.strokeStyle = "rgba(163,156,141,0.35)";
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(cx, cy, outerR, -Math.PI / 2, -Math.PI / 2 + severityFrac * Math.PI * 2);
-  ctx.lineWidth = ringWidth;
-  ctx.strokeStyle = accent;
-  ctx.lineCap = "round";
-  ctx.stroke();
-
-  // badge body
-  ctx.beginPath();
-  ctx.arc(cx, cy, badgeR, 0, Math.PI * 2);
-  ctx.fillStyle = T.bg.card;
-  ctx.fill();
-  ctx.lineWidth = (severity === "critical" ? 3.5 : 2.5) * RENDER_SCALE;
-  ctx.strokeStyle = accent;
-  ctx.stroke();
-
-  // glyph
-  ctx.fillStyle = accent;
-  ctx.font = `${Math.round(badgeR * 1.1)}px "Segoe UI Symbol", "Noto Sans Symbols", sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(glyph, cx, cy + 2 * RENDER_SCALE);
-
-  const url = canvas.toDataURL();
-  iconCache.set(key, url);
-  return url;
-}
-
-function buildSectorDotIcon(colorHex) {
-  const key = `dot:${colorHex}`;
-  if (iconCache.has(key)) return iconCache.get(key);
-
-  const size = 20 * RENDER_SCALE;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size / 2 - 3 * RENDER_SCALE, 0, Math.PI * 2);
-  ctx.fillStyle = colorHex;
-  ctx.fill();
-  ctx.lineWidth = 2 * RENDER_SCALE;
-  ctx.strokeStyle = T.bg.card;
-  ctx.stroke();
-
-  const url = canvas.toDataURL();
-  iconCache.set(key, url);
-  return url;
-}
-
-function buildClusterIcon(count, accent) {
-  const key = `cluster:${count}:${accent}`;
-  if (iconCache.has(key)) return iconCache.get(key);
-
-  const size = 100 * RENDER_SCALE;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  const cx = size / 2, cy = size / 2, r = size / 2 - 6 * RENDER_SCALE;
-
-  const grad = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r * 1.5);
-  grad.addColorStop(0, hexToRgba(accent, 0.35));
-  grad.addColorStop(1, hexToRgba(accent, 0));
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = T.text.primary;
-  ctx.fill();
-  ctx.lineWidth = 4 * RENDER_SCALE;
-  ctx.strokeStyle = T.bg.card;
-  ctx.stroke();
-
-  ctx.fillStyle = T.bg.card;
-  ctx.font = `bold ${Math.round(r * 0.85)}px sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(String(count), cx, cy + 2 * RENDER_SCALE);
-
-  const url = canvas.toDataURL();
-  iconCache.set(key, url);
-  return url;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Anomaly badge — the always-on pin for every non-nominal signal. Clicking  */
-/* it selects the signal: the pin disappears from this clustered layer and   */
-/* is replaced (see CityMap render) by its rich per-agent zone + the drawer. */
-/* -------------------------------------------------------------------------- */
-
-function AnomalyBadge({ signal, highlighted, dimmed, onClick }) {
-  const severity = signal.anomalyLevel === "critical" ? "critical" : signal.anomalyLevel === "warning" ? "warning" : "nominal";
-  const size = severity === "critical" ? 54 : severity === "warning" ? 44 : 32;
-  const icon = buildBadgeIcon(signal.agentId, severity, signal.healthScore, highlighted);
-  const headline = headlineFor(signal.agentId, signal.metrics);
-
-  // Only critical (or cascade-highlighted) pins are even candidates for a
-  // text label, and even then only once the camera is close — see
-  // distanceDisplayCondition below. At city-wide zoom this keeps the whole
-  // view to icons only; labels appear once you've zoomed into a sector or
-  // two, which is also exactly when they stop overlapping each other.
+  // Spiral offset so overlapping pins don't stack — each gets a unique angle+distance
+  const OFFSETS = [
+    [0,0],[28,0],[-28,0],[0,28],[0,-28],
+    [20,20],[-20,20],[20,-20],[-20,-20],
+    [36,0],[-36,0],[0,36],
+  ];
+  const [dxM, dyM] = OFFSETS[Math.min(offsetIndex, OFFSETS.length-1)];
+  const loc = offsetIndex===0 ? signal.location : offsetLoc(signal.location, dxM, dyM);
 
   return (
     <Entity
-      position={positionOf(signal.location, 26)}
-      onClick={() => onClick(signal)}
+      position={pos3(loc, 28)}
+      onClick={()=>onClick(signal)}
       billboard={{
-        image: icon,
-        width: size,
-        height: size,
-        color: dimmed ? cesiumColor("#FFFFFF", 0.45) : Cesium.Color.WHITE,
+        image: agentIcon(signal.agentId, sev, signal.healthScore, highlighted),
+        width: size, height: size,
+        color: dimmed ? cc("#FFFFFF",0.5) : Cesium.Color.WHITE,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        eyeOffset: new Cesium.Cartesian3(0,0,-500),
       }}
       label={undefined}
     />
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Per-agent rich zone visualizations — ONLY rendered for the currently-      */
-/* selected signal, in place of its pin. Sized off real                      */
-/* location.radiusMeters / metric-derived scale, and prefers real backend    */
-/* geometry (LineString / Polygon) the instant it's present.                 */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────────────────────────────────────── */
+/* Zone geometry helpers                                   */
+/* ─────────────────────────────────────────────────────── */
+function rad(s,m=1){ return Math.max(80,Number(s?.location?.radiusMeters||300)*m); }
 
-function radius(signal, multiplier = 1) {
-  return Math.max(80, Number(signal?.location?.radiusMeters || 300) * multiplier);
+function makeZone(signal,meters,points=12,seed=0){
+  const loc=signal?.location;
+  if(!loc||typeof loc.lat!=="number"||typeof loc.lng!=="number") return [];
+  const pts=[];
+  for(let i=0;i<points;i++){
+    const a=(Math.PI*2*i)/points+seed*0.37;
+    const v=0.78+((i*17+seed*13)%29)/100;
+    pts.push(loc.lng+Math.cos(a)*mToLng(meters,loc.lat)*v, loc.lat+Math.sin(a)*mToLat(meters)*v);
+  }
+  return Cesium.Cartesian3.fromDegreesArray(pts);
 }
 
-function makeZone(signal, meters, points = 12, seed = 0) {
-  const location = signal?.location;
-  if (!location || typeof location.lat !== "number" || typeof location.lng !== "number") return [];
-
-  const latStep = metersToLat(meters);
-  const lngStep = metersToLng(meters, location.lat);
-  const positions = [];
-
-  for (let i = 0; i < points; i++) {
-    const angle = (Math.PI * 2 * i) / points + seed * 0.37;
-    const variation = 0.78 + ((i * 17 + seed * 13) % 29) / 100;
-    const x = Math.cos(angle) * lngStep * variation;
-    const y = Math.sin(angle) * latStep * variation;
-    positions.push(location.lng + x, location.lat + y);
-  }
-
-  return Cesium.Cartesian3.fromDegreesArray(positions);
+function makeDir(signal,lenM,widM,dir=0,seed=0){
+  const loc=signal?.location; if(!loc) return [];
+  const h=toRad(dir);
+  const fLng=Math.sin(h),fLat=Math.cos(h),sLng=Math.cos(h),sLat=-Math.sin(h);
+  const cLng=mToLng(lenM,loc.lat),cLat=mToLat(lenM),wLng=mToLng(widM,loc.lat),wLat=mToLat(widM);
+  const tpl=[[0,-0.18],[0.25,-0.48],[0.58,-0.72],[0.88,-0.82],[1.0,-0.45],[1.08,0],[1.0,0.45],[0.88,0.82],[0.58,0.72],[0.25,0.48],[0,0.18]];
+  const deg=[];
+  tpl.forEach(([fw,sd],i)=>{ const w=1+Math.sin(i*2.1+seed)*0.025; deg.push(loc.lng+(fLng*cLng*fw+sLng*wLng*sd)*w,loc.lat+(fLat*cLat*fw+sLat*wLat*sd)*w); });
+  return Cesium.Cartesian3.fromDegreesArray(deg);
 }
 
-// directionDeg follows compass degrees: 0 = north, 90 = east, 180 = south, 270 = west
-function makeDirectionalZone(signal, lengthMeters, widthMeters, directionDeg = 0, seed = 0) {
-  const location = signal?.location;
-  if (!location) return [];
-
-  const heading = toRad(directionDeg);
-  const forwardLng = Math.sin(heading);
-  const forwardLat = Math.cos(heading);
-  const sideLng = Math.cos(heading);
-  const sideLat = -Math.sin(heading);
-
-  const centerLngStep = metersToLng(lengthMeters, location.lat);
-  const centerLatStep = metersToLat(lengthMeters);
-  const widthLngStep = metersToLng(widthMeters, location.lat);
-  const widthLatStep = metersToLat(widthMeters);
-
-  const center = { lng: location.lng, lat: location.lat };
-
-  function point(forward, side) {
-    return {
-      lng: center.lng + forwardLng * centerLngStep * forward + sideLng * widthLngStep * side,
-      lat: center.lat + forwardLat * centerLatStep * forward + sideLat * widthLatStep * side,
-    };
-  }
-
-  const points = [
-    point(0.0, -0.18), point(0.25, -0.48), point(0.58, -0.72), point(0.88, -0.82),
-    point(1.0, -0.45), point(1.08, 0.0), point(1.0, 0.45), point(0.88, 0.82),
-    point(0.58, 0.72), point(0.25, 0.48), point(0.0, 0.18),
-  ];
-
-  const degrees = [];
-  points.forEach((pnt, index) => {
-    const wobble = 1 + Math.sin(index * 2.1 + seed) * 0.025;
-    degrees.push(
-      center.lng + (pnt.lng - center.lng) * wobble,
-      center.lat + (pnt.lat - center.lat) * wobble
-    );
-  });
-
-  return Cesium.Cartesian3.fromDegreesArray(degrees);
+function roadPos(signal,lenM=1600){
+  const geo=signal?.geometry||signal?.location?.geometry;
+  if(geo?.type==="LineString"&&Array.isArray(geo.coordinates)) return Cesium.Cartesian3.fromDegreesArray(geo.coordinates.flat());
+  const loc=signal?.location; if(!loc) return [];
+  const lS=mToLng(lenM,loc.lat),lA=mToLat(lenM*0.18);
+  return Cesium.Cartesian3.fromDegreesArray([loc.lng-lS,loc.lat-lA,loc.lng-lS*0.55,loc.lat-lA*0.4,loc.lng,loc.lat,loc.lng+lS*0.55,loc.lat+lA*0.4,loc.lng+lS,loc.lat+lA]);
 }
 
-function roadPositions(signal, lengthMeters = 1600) {
-  const geometry = signal?.geometry || signal?.location?.geometry;
-
-  if (geometry?.type === "LineString" && Array.isArray(geometry.coordinates)) {
-    return Cesium.Cartesian3.fromDegreesArray(geometry.coordinates.flat());
+function geoPoly(signal,fallback){
+  const geo=signal?.geometry||signal?.location?.geometry;
+  if(geo?.type==="Polygon"&&Array.isArray(geo.coordinates)){
+    const ring=geo.coordinates[0];
+    if(ring?.length>=3) return Cesium.Cartesian3.fromDegreesArray(ring.flat());
   }
-
-  const location = signal?.location;
-  if (!location) return [];
-
-  const lngStep = metersToLng(lengthMeters, location.lat);
-  const latStep = metersToLat(lengthMeters * 0.18);
-
-  return Cesium.Cartesian3.fromDegreesArray([
-    location.lng - lngStep, location.lat - latStep,
-    location.lng - lngStep * 0.55, location.lat - latStep * 0.4,
-    location.lng, location.lat,
-    location.lng + lngStep * 0.55, location.lat + latStep * 0.4,
-    location.lng + lngStep, location.lat + latStep,
-  ]);
-}
-
-function geometryPolygon(signal, fallback) {
-  const geometry = signal?.geometry || signal?.location?.geometry;
-
-  if (geometry?.type === "Polygon" && Array.isArray(geometry.coordinates)) {
-    const ring = geometry.coordinates[0];
-    if (ring?.length >= 3) return Cesium.Cartesian3.fromDegreesArray(ring.flat());
-  }
-
   return fallback;
 }
 
-/* SourceMarker — the small always-visible dot at a signal's exact location,
-   rendered as part of every agent's rich zone visualization. `point` and
-   `ellipse` graphics (unlike `polygon`/`polyline`, which carry their own
-   absolute coordinates) are positioned from the owning Entity's `position`
-   property — nesting inside a positioned parent does NOT inherit it. Both
-   graphics below now get their own explicit position for that reason. */
-function SourceMarker({ signal, color, triggered, onClick }) {
-  const pos = positionOf(signal.location, 20);
+/* ─────────────────────────────────────────────────────── */
+/* Source dot marker                                        */
+/* ─────────────────────────────────────────────────────── */
+function SrcDot({signal,color,triggered,onClick}){
   return (
-    <Entity onClick={() => onClick(signal)}>
-      <Entity
-        position={pos}
-        point={{
-          pixelSize: triggered ? 13 : 9,
-          color: cesiumColor(color, 1),
-          outlineColor: Cesium.Color.WHITE,
-          outlineWidth: 2,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        }}
-      />
-      {triggered && (
-        <Entity
-          position={pos}
-          ellipse={{
-            semiMajorAxis: radius(signal, 0.16),
-            semiMinorAxis: radius(signal, 0.16),
-            height: 24,
-            material: cesiumColor(color, 0.12),
-            outline: true,
-            outlineColor: cesiumColor(color, 0.8),
-            outlineWidth: 2,
-          }}
-        />
-      )}
+    <Entity onClick={()=>onClick(signal)}>
+      <Entity position={pos3(signal.location,22)} point={{
+        pixelSize:triggered?14:10,
+        color:cc(color,1),
+        outlineColor:cc("#000000",0.8),
+        outlineWidth:2.5,
+        heightReference:Cesium.HeightReference.NONE,
+        disableDepthTestDistance:Number.POSITIVE_INFINITY,
+      }}/>
     </Entity>
   );
 }
 
-function SmogVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const aqi = Number(metrics.aqi || 160);
-  const pm25 = Number(metrics.pm25 || 100);
-  const scale = Math.min(2.8, Math.max(1, aqi / 150 + pm25 / 600));
-  const wind = typeof metrics.windDirectionDeg === "number" ? metrics.windDirectionDeg : 135;
+/* ─────────────────────────────────────────────────────── */
+/* Per-agent zone visuals                                  */
+/* ─────────────────────────────────────────────────────── */
+const ZC={smog:"#FF2020",flood:"#1080FF",thermal:"#FF6600",transit:"#FFAA00",metro:"#8844FF",power:"#FFE000",industrial:"#FF1010",hospital:"#FF2060",emergency:"#FF0030",panic:"#AA00FF",traffic:"#FF8800"};
 
-  const plume = geometryPolygon(signal, makeDirectionalZone(signal, radius(signal, 1.7) * scale, radius(signal, 0.8) * scale, wind, 3));
-  const innerPlume = makeDirectionalZone(signal, radius(signal, 0.85) * scale, radius(signal, 0.35) * scale, wind, 8);
-
-  return (
-    <Entity name={`SMOG — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polygon={{ hierarchy: plume, height: 15, material: cesiumColor(COLORS.smog, triggered ? 0.28 : 0.17), outline: true, outlineColor: cesiumColor(COLORS.smog, triggered ? 0.95 : 0.65), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity polygon={{ hierarchy: innerPlume, height: 22, material: cesiumColor("#FF1111", triggered ? 0.34 : 0.21), outline: false }} />
-      <Entity polyline={{ positions: roadPositions({ ...signal, location: { ...signal.location, radiusMeters: radius(signal, 0.8) } }, radius(signal, 1.2)), width: triggered ? 4 : 2, material: cesiumColor("#FF7777", 0.55), clampToGround: true }} />
-      <SourceMarker signal={signal} color={COLORS.smog} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 35)} label={{ text: `SMOG  AQI ${metrics.aqi ?? "—"}`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#260000", 0.82) }} />
-    </Entity>
-  );
+function Smog({signal,triggered,onClick}){
+  const m=signal.metrics||{};
+  const scale=Math.min(2.8,Math.max(1,Number(m.aqi||160)/150+Number(m.pm25||100)/600));
+  const wind=typeof m.windDirectionDeg==="number"?m.windDirectionDeg:135;
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polygon={{hierarchy:geoPoly(signal,makeDir(signal,rad(signal,1.7)*scale,rad(signal,0.8)*scale,wind,3)),height:15,material:cc(ZC.smog,triggered?0.50:0.32),outline:true,outlineColor:cc(ZC.smog,triggered?1.0:0.80),outlineWidth:triggered?5:3}}/>
+    <Entity polygon={{hierarchy:makeDir(signal,rad(signal,0.85)*scale,rad(signal,0.35)*scale,wind,8),height:22,material:cc("#FF0000",triggered?0.60:0.40),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.smog} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function FloodVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const depth = Number(metrics.waterDepthCm || 12);
-  const scale = Math.min(2.8, Math.max(0.9, depth / 15));
-
-  const outer = geometryPolygon(signal, makeZone(signal, radius(signal, scale), 14, 4));
-  const middle = makeZone(signal, radius(signal, scale * 0.68), 12, 9);
-  const core = makeZone(signal, radius(signal, scale * 0.35), 10, 13);
-
-  return (
-    <Entity name={`FLOOD — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polygon={{ hierarchy: outer, height: 5, material: cesiumColor(COLORS.flood, triggered ? 0.32 : 0.20), outline: true, outlineColor: cesiumColor(COLORS.flood, 0.9), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity polygon={{ hierarchy: middle, height: 8, material: cesiumColor("#0876E8", 0.25), outline: true, outlineColor: cesiumColor("#4DB4FF", 0.65), outlineWidth: 2 }} />
-      <Entity polygon={{ hierarchy: core, height: 11, material: cesiumColor("#005CC8", 0.30), outline: false }} />
-      <SourceMarker signal={signal} color={COLORS.flood} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 30)} label={{ text: `FLOOD  ${depth}cm`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -24), showBackground: true, backgroundColor: cesiumColor("#00335F", 0.85) }} />
-    </Entity>
-  );
+function Flood({signal,triggered,onClick}){
+  const scale=Math.min(2.8,Math.max(0.9,Number(signal.metrics?.waterDepthCm||12)/15));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,scale),14,4),height:5,material:cc(ZC.flood,triggered?0.55:0.38),outline:true,outlineColor:cc(ZC.flood,triggered?1.0:0.85),outlineWidth:triggered?5:3}}/>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,scale*0.6),12,9),height:9,material:cc("#0055FF",0.50),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.flood} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function ThermalVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const temp = Number(metrics.feelsLikeTempC || metrics.ambientTempC || 42);
-  const scale = Math.min(2.5, Math.max(0.8, temp / 42));
-
-  const outer = makeZone(signal, radius(signal, scale), 16, 5);
-  const middle = makeZone(signal, radius(signal, scale * 0.65), 14, 10);
-  const core = makeZone(signal, radius(signal, scale * 0.32), 12, 15);
-
-  return (
-    <Entity name={`THERMAL — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polygon={{ hierarchy: outer, height: 7, material: cesiumColor("#FF8A00", 0.11), outline: true, outlineColor: cesiumColor(COLORS.thermal, triggered ? 0.95 : 0.55), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity polygon={{ hierarchy: middle, height: 11, material: cesiumColor("#FF4B00", 0.16), outline: false }} />
-      <Entity polygon={{ hierarchy: core, height: 15, material: cesiumColor("#FF1500", 0.23), outline: true, outlineColor: cesiumColor("#FF5A00", 0.7), outlineWidth: 2 }} />
-      <SourceMarker signal={signal} color={COLORS.thermal} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 32)} label={{ text: `HEAT  ${temp}°C`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#571600", 0.85) }} />
-    </Entity>
-  );
+function Thermal({signal,triggered,onClick}){
+  const scale=Math.min(2.5,Math.max(0.8,Number(signal.metrics?.feelsLikeTempC||signal.metrics?.ambientTempC||42)/42));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,scale),16,5),height:7,material:cc(ZC.thermal,triggered?0.50:0.32),outline:true,outlineColor:cc(ZC.thermal,triggered?1.0:0.80),outlineWidth:triggered?5:3}}/>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,scale*0.55),14,10),height:12,material:cc("#FF3300",0.50),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.thermal} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function TransitFleetVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const ratio = Number(metrics.stationaryRatio || 0.72);
-  const length = radius(signal, 2.1) * Math.min(1.5, Math.max(0.7, ratio + 0.35));
-  const road = roadPositions(signal, length);
-
-  return (
-    <Entity name={`BUS FLEET — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polyline={{ positions: road, width: triggered ? 18 : 11, material: cesiumColor(COLORS.transit, 0.20), clampToGround: true }} />
-      <Entity polyline={{ positions: road, width: triggered ? 7 : 4, material: cesiumColor(COLORS.transit, 0.92), clampToGround: true }} />
-      <Entity polygon={{ hierarchy: makeDirectionalZone(signal, length * 0.55, radius(signal, 0.55), 90, 7), height: 6, material: cesiumColor("#FF6A00", 0.10), outline: true, outlineColor: cesiumColor(COLORS.transit, 0.55), outlineWidth: 2 }} />
-      <SourceMarker signal={signal} color={COLORS.transit} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 32)} label={{ text: `BUS GRIDLOCK  ${Math.round(ratio * 100)}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#4A2600", 0.88) }} />
-    </Entity>
-  );
+function Transit({signal,triggered,onClick}){
+  const ratio=Number(signal.metrics?.stationaryRatio||0.72);
+  const len=rad(signal,2.1)*Math.min(1.5,Math.max(0.7,ratio+0.35));
+  const road=roadPos(signal,len);
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polyline={{positions:road,width:triggered?22:14,material:cc(ZC.transit,0.30),clampToGround:true}}/>
+    <Entity polyline={{positions:road,width:triggered?9:5,material:cc(ZC.transit,1.0),clampToGround:true}}/>
+    <SrcDot signal={signal} color={ZC.transit} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function RoadCorridorVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const jamLength = Math.max(800, Number(metrics.jamLengthMeters || 1800));
-  const positions = roadPositions(signal, Math.min(3500, jamLength));
-
-  return (
-    <Entity name={`ROAD CONGESTION — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polyline={{ positions, width: triggered ? 22 : 15, material: cesiumColor(COLORS.traffic, 0.16), clampToGround: true }} />
-      <Entity polyline={{ positions, width: triggered ? 10 : 7, material: cesiumColor(COLORS.traffic, 0.92), clampToGround: true }} />
-      <SourceMarker signal={signal} color={COLORS.traffic} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 32)} label={{ text: `ROAD  ${metrics.congestionLevelPct ?? metrics.congestionPct ?? "—"}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#4D3000", 0.88) }} />
-    </Entity>
-  );
+function Road({signal,triggered,onClick}){
+  const len=Math.min(3500,Math.max(800,Number(signal.metrics?.jamLengthMeters||1800)));
+  const road=roadPos(signal,len);
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polyline={{positions:road,width:triggered?24:16,material:cc(ZC.traffic,0.28),clampToGround:true}}/>
+    <Entity polyline={{positions:road,width:triggered?10:6,material:cc(ZC.traffic,1.0),clampToGround:true}}/>
+    <SrcDot signal={signal} color={ZC.traffic} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function MetroVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const crowd = Number(metrics.platformCapacityPct || 80);
-  const stationRadius = radius(signal) * Math.min(1.9, Math.max(0.7, crowd / 70));
-
-  return (
-    <Entity name={`METRO — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity position={positionOf(signal.location, 8)} ellipse={{ semiMajorAxis: stationRadius, semiMinorAxis: stationRadius, height: 8, material: cesiumColor(COLORS.metro, 0.12), outline: true, outlineColor: cesiumColor(COLORS.metro, 0.85), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity position={positionOf(signal.location, 12)} ellipse={{ semiMajorAxis: stationRadius * 0.55, semiMinorAxis: stationRadius * 0.55, height: 12, material: cesiumColor("#6F35FF", 0.18), outline: true, outlineColor: cesiumColor(COLORS.metro, 0.55), outlineWidth: 2 }} />
-      <SourceMarker signal={signal} color={COLORS.metro} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 35)} label={{ text: `METRO  ${crowd}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#27104A", 0.88) }} />
-    </Entity>
-  );
+function Metro({signal,triggered,onClick}){
+  const sr=rad(signal)*Math.min(1.9,Math.max(0.7,Number(signal.metrics?.platformCapacityPct||80)/70));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity position={pos3(signal.location,8)} ellipse={{semiMajorAxis:sr,semiMinorAxis:sr,height:8,material:cc(ZC.metro,triggered?0.50:0.32),outline:true,outlineColor:cc(ZC.metro,triggered?1.0:0.85),outlineWidth:triggered?5:3}}/>
+    <Entity position={pos3(signal.location,12)} ellipse={{semiMajorAxis:sr*0.5,semiMinorAxis:sr*0.5,height:12,material:cc("#6600FF",0.50),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.metro} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function PowerVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const load = Number(metrics.transformerLoadPct || metrics.gridLoadPct || 88);
-
-  const outer = makeZone(signal, radius(signal, 1.2), 10, 6);
-  const inner = makeZone(signal, radius(signal, 0.55), 8, 12);
-
-  const spokes = [];
-  for (let i = 0; i < 8; i++) {
-    const angle = (i * Math.PI * 2) / 8;
-    const length = radius(signal, 1.15);
-    const lat1 = signal.location.lat + Math.cos(angle) * metersToLat(length);
-    const lng1 = signal.location.lng + Math.sin(angle) * metersToLng(length, signal.location.lat);
-    spokes.push(
-      <Entity key={`power-spoke-${i}`} polyline={{ positions: Cesium.Cartesian3.fromDegreesArray([signal.location.lng, signal.location.lat, lng1, lat1]), width: 2, material: cesiumColor(COLORS.power, 0.55), clampToGround: true }} />
-    );
+function Power({signal,triggered,onClick}){
+  const spokes=[];
+  for(let i=0;i<8;i++){
+    const a=(i*Math.PI*2)/8, len=rad(signal,1.15);
+    spokes.push(<Entity key={`sk${i}`} polyline={{positions:Cesium.Cartesian3.fromDegreesArray([signal.location.lng,signal.location.lat,signal.location.lng+Math.sin(a)*mToLng(len,signal.location.lat),signal.location.lat+Math.cos(a)*mToLat(len)]),width:2.5,material:cc(ZC.power,0.80),clampToGround:true}}/>);
   }
-
-  return (
-    <Entity name={`POWER GRID — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polygon={{ hierarchy: outer, height: 7, material: cesiumColor(COLORS.power, 0.09), outline: true, outlineColor: cesiumColor(COLORS.power, 0.75), outlineWidth: triggered ? 4 : 2 }} />
-      <Entity polygon={{ hierarchy: inner, height: 12, material: cesiumColor("#FFAA00", 0.18), outline: true, outlineColor: cesiumColor("#FF5C00", 0.7), outlineWidth: 2 }} />
-      {spokes}
-      <SourceMarker signal={signal} color={COLORS.power} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 34)} label={{ text: `POWER  ${load}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#4D3D00", 0.9) }} />
-    </Entity>
-  );
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,1.2),10,6),height:7,material:cc(ZC.power,triggered?0.42:0.26),outline:true,outlineColor:cc(ZC.power,triggered?1.0:0.80),outlineWidth:triggered?5:3}}/>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,0.5),8,12),height:12,material:cc("#FFA000",0.50),outline:false}}/>
+    {spokes}
+    <SrcDot signal={signal} color={ZC.power} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function IndustrialVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const evacuationRadius = Number(metrics.evacuationRadiusMeters || signal.location?.radiusMeters || 800);
-
-  const outer = makeZone(signal, evacuationRadius, 16, 3);
-  const inner = makeZone(signal, evacuationRadius * 0.38, 12, 9);
-  const plume = makeDirectionalZone(signal, evacuationRadius * 1.6, evacuationRadius * 0.5, Number(metrics.windDirectionDeg || 135), 14);
-
-  return (
-    <Entity name={`INDUSTRIAL HAZARD — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      {(metrics.toxicSmokePlume ?? true) && (
-        <Entity polygon={{ hierarchy: plume, height: 16, material: cesiumColor("#737373", 0.15), outline: true, outlineColor: cesiumColor("#AAAAAA", 0.42), outlineWidth: 2 }} />
-      )}
-      <Entity polygon={{ hierarchy: outer, height: 12, material: cesiumColor("#FF0000", triggered ? 0.19 : 0.11), outline: true, outlineColor: cesiumColor(COLORS.industrial, triggered ? 1 : 0.82), outlineWidth: triggered ? 6 : 3 }} />
-      <Entity polygon={{ hierarchy: inner, height: 22, material: cesiumColor("#FF1800", 0.32), outline: true, outlineColor: cesiumColor("#FF3B00", 1), outlineWidth: 4 }} />
-      <SourceMarker signal={signal} color={COLORS.industrial} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 40)} label={{ text: "⚠ INDUSTRIAL HAZARD", font: "bold 11px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 4, pixelOffset: new Cesium.Cartesian2(0, -30), showBackground: true, backgroundColor: cesiumColor("#780000", 0.9) }} />
-    </Entity>
-  );
+function Industrial({signal,triggered,onClick}){
+  const m=signal.metrics||{};
+  const evacR=Number(m.evacuationRadiusMeters||signal.location?.radiusMeters||800);
+  return <Entity onClick={()=>onClick(signal)}>
+    {(m.toxicSmokePlume??true)&&<Entity polygon={{hierarchy:makeDir(signal,evacR*1.6,evacR*0.5,Number(m.windDirectionDeg||135),14),height:16,material:cc("#999999",0.35),outline:true,outlineColor:cc("#CCCCCC",0.65),outlineWidth:2}}/>}
+    <Entity polygon={{hierarchy:makeZone(signal,evacR,16,3),height:12,material:cc(ZC.industrial,triggered?0.52:0.34),outline:true,outlineColor:cc(ZC.industrial,triggered?1.0:0.85),outlineWidth:triggered?6:4}}/>
+    <Entity polygon={{hierarchy:makeZone(signal,evacR*0.35,12,9),height:22,material:cc("#FF0000",0.55),outline:true,outlineColor:cc("#FF4400",1),outlineWidth:4}}/>
+    <SrcDot signal={signal} color={ZC.industrial} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function HospitalVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const occupancy = Number(metrics.icuOccupancyPct || 90);
-  const outerRadius = radius(signal) * Math.min(2, Math.max(0.8, occupancy / 75));
-
-  return (
-    <Entity name={`HOSPITAL — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity position={positionOf(signal.location, 9)} ellipse={{ semiMajorAxis: outerRadius, semiMinorAxis: outerRadius, height: 9, material: cesiumColor(COLORS.hospital, 0.09), outline: true, outlineColor: cesiumColor(COLORS.hospital, 0.8), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity position={positionOf(signal.location, 14)} ellipse={{ semiMajorAxis: outerRadius * 0.58, semiMinorAxis: outerRadius * 0.58, height: 14, material: cesiumColor("#FF164E", 0.18), outline: true, outlineColor: cesiumColor("#FF4B77", 0.7), outlineWidth: 2 }} />
-      <SourceMarker signal={signal} color={COLORS.hospital} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 35)} label={{ text: `ICU  ${occupancy}%`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#500018", 0.9) }} />
-    </Entity>
-  );
+function Hospital({signal,triggered,onClick}){
+  const or_=rad(signal)*Math.min(2,Math.max(0.8,Number(signal.metrics?.icuOccupancyPct||90)/75));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity position={pos3(signal.location,9)} ellipse={{semiMajorAxis:or_,semiMinorAxis:or_,height:9,material:cc(ZC.hospital,triggered?0.48:0.30),outline:true,outlineColor:cc(ZC.hospital,triggered?1.0:0.85),outlineWidth:triggered?5:3}}/>
+    <Entity position={pos3(signal.location,14)} ellipse={{semiMajorAxis:or_*0.5,semiMinorAxis:or_*0.5,height:14,material:cc("#FF0040",0.50),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.hospital} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function EmergencyVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const spike = Number(metrics.callVelocitySpikeRatio || 3);
-  const scale = Math.min(2.5, Math.max(0.8, spike / 2.5));
-
-  return (
-    <Entity name={`112 DISPATCH — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity position={positionOf(signal.location, 7)} ellipse={{ semiMajorAxis: radius(signal, scale), semiMinorAxis: radius(signal, scale), height: 7, material: cesiumColor(COLORS.emergency, 0.10), outline: true, outlineColor: cesiumColor(COLORS.emergency, 0.85), outlineWidth: triggered ? 5 : 2 }} />
-      <Entity position={positionOf(signal.location, 12)} ellipse={{ semiMajorAxis: radius(signal, scale * 0.5), semiMinorAxis: radius(signal, scale * 0.5), height: 12, material: cesiumColor("#FF1744", 0.19), outline: true, outlineColor: cesiumColor("#FF1744", 0.65), outlineWidth: 2 }} />
-      <SourceMarker signal={signal} color={COLORS.emergency} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 35)} label={{ text: `112  ${metrics.callVolumePerMin ?? "—"}/MIN`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#560010", 0.9) }} />
-    </Entity>
-  );
+function Emergency({signal,triggered,onClick}){
+  const scale=Math.min(2.5,Math.max(0.8,Number(signal.metrics?.callVelocitySpikeRatio||3)/2.5));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity position={pos3(signal.location,7)} ellipse={{semiMajorAxis:rad(signal,scale),semiMinorAxis:rad(signal,scale),height:7,material:cc(ZC.emergency,triggered?0.50:0.30),outline:true,outlineColor:cc(ZC.emergency,triggered?1.0:0.85),outlineWidth:triggered?5:3}}/>
+    <Entity position={pos3(signal.location,12)} ellipse={{semiMajorAxis:rad(signal,scale*0.45),semiMinorAxis:rad(signal,scale*0.45),height:12,material:cc("#FF0020",0.55),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.emergency} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function PanicVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const panic = Number(metrics.meanRoBERTaPanicScore || 0.7);
-  const velocity = Number(metrics.keywordVelocityRatio || 4);
-  const scale = Math.min(2.8, Math.max(0.9, panic + velocity / 7));
-
-  const outer = makeZone(signal, radius(signal, scale), 15, 7);
-  const middle = makeZone(signal, radius(signal, scale * 0.62), 13, 12);
-  const core = makeZone(signal, radius(signal, scale * 0.28), 11, 19);
-
-  return (
-    <Entity name={`SOCIAL PANIC — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polygon={{ hierarchy: outer, height: 5, material: cesiumColor(COLORS.panic, 0.08), outline: true, outlineColor: cesiumColor(COLORS.panic, triggered ? 0.9 : 0.5), outlineWidth: triggered ? 4 : 2 }} />
-      <Entity polygon={{ hierarchy: middle, height: 9, material: cesiumColor("#9E2CFF", 0.13), outline: true, outlineColor: cesiumColor("#B94CFF", 0.65), outlineWidth: 2 }} />
-      <Entity polygon={{ hierarchy: core, height: 14, material: cesiumColor("#D000FF", 0.24), outline: true, outlineColor: cesiumColor(COLORS.panic, 0.9), outlineWidth: 3 }} />
-      <SourceMarker signal={signal} color={COLORS.panic} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 35)} label={{ text: `PANIC  ${panic.toFixed(2)}`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#39004D", 0.9) }} />
-    </Entity>
-  );
+function Panic({signal,triggered,onClick}){
+  const m=signal.metrics||{};
+  const scale=Math.min(2.8,Math.max(0.9,Number(m.meanRoBERTaPanicScore||0.7)+Number(m.keywordVelocityRatio||4)/7));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,scale),15,7),height:5,material:cc(ZC.panic,triggered?0.45:0.28),outline:true,outlineColor:cc(ZC.panic,triggered?1.0:0.80),outlineWidth:triggered?4:2.5}}/>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal,scale*0.55),13,12),height:10,material:cc("#8800FF",0.45),outline:false}}/>
+    <SrcDot signal={signal} color={ZC.panic} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function TrafficNewsVisual({ signal, triggered, onClick }) {
-  const metrics = signal.metrics || {};
-  const positions = roadPositions(signal, radius(signal, 2.2));
-
-  return (
-    <Entity name={`ROAD CLOSURE — ${labelText(signal)}`} onClick={() => onClick(signal)}>
-      <Entity polyline={{ positions, width: triggered ? 24 : 17, material: cesiumColor(COLORS.traffic, 0.18), clampToGround: true }} />
-      <Entity polyline={{ positions, width: triggered ? 9 : 6, material: cesiumColor("#FF5500", 0.95), clampToGround: true }} />
-      <SourceMarker signal={signal} color={COLORS.traffic} triggered={triggered} onClick={onClick} />
-      <Entity position={positionOf(signal.location, 34)} label={{ text: `ROAD BLOCK  ${metrics.closureSeverity || signal.anomalyLevel || "—"}`, font: "bold 10px monospace", fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3, pixelOffset: new Cesium.Cartesian2(0, -25), showBackground: true, backgroundColor: cesiumColor("#503000", 0.9) }} />
-    </Entity>
-  );
+function Traffic({signal,triggered,onClick}){
+  const road=roadPos(signal,rad(signal,2.2));
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polyline={{positions:road,width:triggered?26:18,material:cc(ZC.traffic,0.28),clampToGround:true}}/>
+    <Entity polyline={{positions:road,width:triggered?10:6,material:cc("#FF6600",1.0),clampToGround:true}}/>
+    <SrcDot signal={signal} color={ZC.traffic} triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function GenericVisual({ signal, triggered, onClick }) {
-  const color = severityColor(signal);
-  const outer = makeZone(signal, radius(signal), 12, 4);
-  const inner = makeZone(signal, radius(signal, 0.45), 9, 8);
-
-  return (
-    <Entity name={signal.agentId} onClick={() => onClick(signal)}>
-      <Entity polygon={{ hierarchy: outer, height: 5, material: cesiumColor(color, 0.08), outline: true, outlineColor: cesiumColor(color, 0.75), outlineWidth: triggered ? 4 : 2 }} />
-      <Entity polygon={{ hierarchy: inner, height: 10, material: cesiumColor(color, 0.16), outline: false }} />
-      <SourceMarker signal={signal} color={color} triggered={triggered} onClick={onClick} />
-    </Entity>
-  );
+function Generic({signal,triggered,onClick}){
+  return <Entity onClick={()=>onClick(signal)}>
+    <Entity polygon={{hierarchy:makeZone(signal,rad(signal),12,4),height:5,material:cc("#FFFFFF",0.22),outline:true,outlineColor:cc("#FFFFFF",0.85),outlineWidth:triggered?4:2.5}}/>
+    <SrcDot signal={signal} color="#FFFFFF" triggered={triggered} onClick={onClick}/>
+  </Entity>;
 }
-
-function AgentVisualization({ signal, triggered, onClick }) {
-  switch (signal.agentId) {
-    case "smog_dispersion": return <SmogVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "waterlogging_hydrology": return <FloodVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "thermal_stress": return <ThermalVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "transit_fleet": return <TransitFleetVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "road_corridor": return <RoadCorridorVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "metro_transit": return <MetroVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "power_grid": return <PowerVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "industrial_hazard": return <IndustrialVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "hospital_capacity": return <HospitalVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "emergency_dispatch": return <EmergencyVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "social_panic": return <PanicVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    case "traffic_news": return <TrafficNewsVisual signal={signal} triggered={triggered} onClick={onClick} />;
-    default: return <GenericVisual signal={signal} triggered={triggered} onClick={onClick} />;
+function AgentViz({signal,triggered,onClick}){
+  switch(signal.agentId){
+    case "smog_dispersion":        return <Smog        signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "waterlogging_hydrology": return <Flood       signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "thermal_stress":         return <Thermal     signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "transit_fleet":          return <Transit     signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "road_corridor":          return <Road        signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "metro_transit":          return <Metro       signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "power_grid":             return <Power       signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "industrial_hazard":      return <Industrial  signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "hospital_capacity":      return <Hospital    signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "emergency_dispatch":     return <Emergency   signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "social_panic":           return <Panic       signal={signal} triggered={triggered} onClick={onClick}/>;
+    case "traffic_news":           return <Traffic     signal={signal} triggered={triggered} onClick={onClick}/>;
+    default:                       return <Generic     signal={signal} triggered={triggered} onClick={onClick}/>;
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* Cascade ripple — dashed lines from the decay engine's actual primary       */
-/* sector to its actual spatialSpread sectors, plus a pulsing red marker on   */
-/* the primary sector ("that area... red marker going up and down").         */
-/* -------------------------------------------------------------------------- */
-
-function CascadeRipple({ cascade }) {
-  if (!cascade?.primarySectorId) return null;
-  const primary = SECTOR_BY_ID[cascade.primarySectorId];
-  if (!primary) return null;
-
-  const targets = (cascade.spatialSpread || [])
-    .map((id) => ({ id, sector: SECTOR_BY_ID[id] }))
-    .filter((t) => t.sector);
-
+/* ─────────────────────────────────────────────────────── */
+/* SECTOR CASCADE LAYER                                    */
+/* Pins + connecting lines are ALWAYS visible.              */
+/* Selecting a cascade brightens the pin/hex/line and adds  */
+/* the pulsing origin ring; nothing appears/disappears on   */
+/* click anymore — click just intensifies + opens sidebar. */
+/* ─────────────────────────────────────────────────────── */
+function SectorCascadeLayer({cascades, selectedId, onSelect}){
+  if(!cascades?.length) return null;
   return (
     <>
-      <Entity
-        position={positionOf(primary, 20)}
-        billboard={{
-          image: buildSectorDotIcon("#FF2020"),
-          width: pulseNumber(20, 36, 900),
-          height: pulseNumber(20, 36, 900),
-          verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        }}
-      />
-      <Entity position={positionOf(primary, 14)}>
-        <Entity
-          ellipse={{
-            semiMajorAxis: pulseNumber(300, 700, 1300),
-            semiMinorAxis: pulseNumber(300, 700, 1300),
-            height: 14,
-            material: pulseMaterial("#FF2020", 0.05, 0.22, 1300),
-            outline: true,
-            outlineColor: pulseColor("#FF2020", 0.4, 0.9, 1300),
-            outlineWidth: 2,
-          }}
-        />
-      </Entity>
+      {cascades.map((casc,ci)=>{
+        const primary = SECTOR_BY_ID[casc.primarySectorId]; if(!primary) return null;
+        const isSelected = selectedId===casc.primarySectorId;
+        const targets = (casc.spatialSpread||[]).slice(0,4)
+          .map(id=>({id,sector:SECTOR_BY_ID[id]})).filter(t=>t.sector);
 
-      {targets.map(({ id, sector }) => (
-        <Entity key={`cascade-line-${id}`}>
-          <Entity
-            polyline={{
-              positions: Cesium.Cartesian3.fromDegreesArray([primary.lng, primary.lat, sector.lng, sector.lat]),
-              width: 2,
-              material: new Cesium.PolylineDashMaterialProperty({ color: cesiumColor(T.cascade.bg, 0.75), dashLength: 14 }),
-              clampToGround: true,
-            }}
-          />
-        </Entity>
-      ))}
+        return (
+          <Entity key={`sc-${casc.primarySectorId}-${ci}`}>
+            {/* Primary hex — always shown in cascade layer */}
+            <CascadeHex sector={primary} role="primary" isSelected={isSelected}/>
+
+            {/* Primary SVG teardrop pin — position + billboard live on the SAME
+                entity so it actually renders (a bare position on a parent Entity
+                does not propagate down to a nested <Entity billboard=...>). */}
+            <Entity
+              position={pos3(primary, 38)}
+              onClick={()=>onSelect(isSelected ? null : casc)}
+              billboard={{
+                image: cascadePin("primary", isSelected),
+                width: 48, height: 64,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                eyeOffset: new Cesium.Cartesian3(0,0,-200),
+              }}
+            />
+
+            {/* Pulsing ring at origin — own entity with its own position */}
+            <Entity
+              position={pos3(primary, 20)}
+              ellipse={{
+                semiMajorAxis: pN(500,1000,900),
+                semiMinorAxis: pN(500,1000,900),
+                height: 20,
+                material: pM(CSC_PRIMARY,0.18,0.45,900),
+                outline: true,
+                outlineColor: pC(CSC_PRIMARY,0.6,1.0,900),
+                outlineWidth: 4,
+              }}
+            />
+
+            {/* Spread sectors — hex, pin, and connecting line are ALWAYS
+                visible so the cascade reads as a connected network at a
+                glance. Selecting the cascade just brightens everything. */}
+            {targets.map(({id,sector})=>(
+              <Entity key={`sc-sp-${id}`}>
+                <CascadeHex sector={sector} role="spread" isSelected={isSelected}/>
+
+                <Entity
+                  position={pos3(sector, 32)}
+                  onClick={()=>onSelect(isSelected ? null : casc)}
+                  billboard={{
+                    image: cascadePin("spread", isSelected),
+                    width: 34, height: 46,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    eyeOffset: new Cesium.Cartesian3(0,0,-200),
+                  }}
+                />
+
+                {/* Connection line primary → spread — always drawn */}
+                <Entity polyline={{
+                  positions: Cesium.Cartesian3.fromDegreesArray([primary.lng,primary.lat,sector.lng,sector.lat]),
+                  width: isSelected ? 10 : 5,
+                  material: new Cesium.PolylineGlowMaterialProperty({
+                    glowPower: isSelected ? 0.5 : 0.25,
+                    color: cc(CSC_PRIMARY, isSelected ? 0.55 : 0.35),
+                  }),
+                  clampToGround: true,
+                }}/>
+                <Entity polyline={{
+                  positions: Cesium.Cartesian3.fromDegreesArray([primary.lng,primary.lat,sector.lng,sector.lat]),
+                  width: isSelected ? 3 : 1.5,
+                  material: cc("#FFFFFF", isSelected ? 0.95 : 0.55),
+                  clampToGround: true,
+                }}/>
+              </Entity>
+            ))}
+          </Entity>
+        );
+      })}
     </>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* CITY MAP                                                                   */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────────────────────────────────────── */
+/* CITY CASCADE LAYER                                      */
+/* Hub + area pins and connecting lines ALWAYS visible.     */
+/* ─────────────────────────────────────────────────────── */
+function CityCascadeLayer({cityIncident, isSelected, onSelect}){
+  if(!cityIncident?.affectedAreas?.length) return null;
+  const areas = cityIncident.affectedAreas
+    .map(a=>({...a,sector:SECTOR_BY_ID[a.primarySectorId]}))
+    .filter(a=>a.sector).slice(0,6);
+  if(!areas.length) return null;
+  const hub = areas[0].sector;
 
-export default function CityMap() {
-  const { allSignals, sectorHealth, networkStats, cascade } = useGhostnet();
+  return (
+    <>
+      {areas.map((area,i)=>{
+        const isHub = i===0;
+        const sector = area.sector;
 
-  const [cesiumViewer, setCesiumViewer] = useState(null);
-  const [activeCity, setActiveCity] = useState("delhi");
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState(null);
-  const [selectedSignal, setSelectedSignal] = useState(null);
-  const location = useLocation();
+        // Each area already carries its own secondarySectors (the sectors
+        // that cascade spilled into around it) — previously this data was
+        // only shown as text in the sidebar and never actually drawn on
+        // the map, which is why a citywide incident with just one district
+        // ever showed only a single hexagon. Render them here too.
+        const spreadTargets = (area.secondarySectors||[]).slice(0,5)
+          .map(id=>({id,sector:SECTOR_BY_ID[id]})).filter(t=>t.sector);
 
-  const clusterDsRef = useRef(null);
-  const clusterHandlerRef = useRef(null);
+        return (
+          <Entity key={`ci-area-${area.primarySectorId}`}>
+            {/* Hex for this area's anchor sector */}
+            <CascadeHex sector={sector} role="city" isSelected={isSelected}/>
 
-  function viewerRefCallback(element) {
-    const viewer = element?.cesiumElement;
-    if (viewer) setCesiumViewer(viewer);
+            {/* SVG teardrop pin — position + billboard on the same entity
+                so it renders (see note in SectorCascadeLayer above). */}
+            <Entity
+              position={pos3(sector, isHub?40:32)}
+              onClick={onSelect}
+              billboard={{
+                image: cascadePin(isHub?"primary":"city", isSelected),
+                width: isHub?48:34, height: isHub?64:46,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                eyeOffset: new Cesium.Cartesian3(0,0,-200),
+              }}
+            />
+
+            {isHub && (
+              <Entity
+                position={pos3(sector, 20)}
+                ellipse={{
+                  semiMajorAxis: pN(600,1200,1800),
+                  semiMinorAxis: pN(600,1200,1800),
+                  height: 20,
+                  material: pM(CSC_CITY,0.18,0.45,1800),
+                  outline: true,
+                  outlineColor: pC(CSC_CITY,0.55,1.0,1800),
+                  outlineWidth: 4,
+                }}
+              />
+            )}
+
+            {/* Connection line from hub to every other affected area —
+                always drawn so the whole incident reads as one connected
+                network at a glance; selection just brightens it. */}
+            {!isHub && (
+              <Entity>
+                <Entity polyline={{
+                  positions: Cesium.Cartesian3.fromDegreesArray([hub.lng,hub.lat,sector.lng,sector.lat]),
+                  width: isSelected ? 12 : 6,
+                  material: new Cesium.PolylineGlowMaterialProperty({
+                    glowPower: isSelected ? 0.5 : 0.25,
+                    color: cc(CSC_CITY, isSelected ? 0.55 : 0.35),
+                  }),
+                  clampToGround: true,
+                }}/>
+                <Entity polyline={{
+                  positions: Cesium.Cartesian3.fromDegreesArray([hub.lng,hub.lat,sector.lng,sector.lat]),
+                  width: isSelected ? 3 : 1.5,
+                  material: cc("#FFFFFF", isSelected ? 0.95 : 0.55),
+                  clampToGround: true,
+                }}/>
+              </Entity>
+            )}
+
+            {/* NEW: this area's own spread sectors — smaller hexes + pins,
+                connected back to THIS area's anchor (not the citywide hub),
+                so the network visually branches out the way the underlying
+                cascade data already describes it. */}
+            {spreadTargets.map(({id,sector:spreadSector})=>(
+              <Entity key={`ci-spread-${area.primarySectorId}-${id}`}>
+                <CascadeHex sector={spreadSector} role="city" isSelected={isSelected}/>
+
+                <Entity
+                  position={pos3(spreadSector, 26)}
+                  onClick={onSelect}
+                  billboard={{
+                    image: cascadePin("city", isSelected),
+                    width: 26, height: 36,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    eyeOffset: new Cesium.Cartesian3(0,0,-200),
+                  }}
+                />
+
+                <Entity polyline={{
+                  positions: Cesium.Cartesian3.fromDegreesArray([sector.lng,sector.lat,spreadSector.lng,spreadSector.lat]),
+                  width: isSelected ? 7 : 3.5,
+                  material: new Cesium.PolylineGlowMaterialProperty({
+                    glowPower: isSelected ? 0.45 : 0.2,
+                    color: cc(CSC_CITY, isSelected ? 0.5 : 0.3),
+                  }),
+                  clampToGround: true,
+                }}/>
+                <Entity polyline={{
+                  positions: Cesium.Cartesian3.fromDegreesArray([sector.lng,sector.lat,spreadSector.lng,spreadSector.lat]),
+                  width: isSelected ? 2 : 1,
+                  material: cc("#FFFFFF", isSelected ? 0.9 : 0.45),
+                  clampToGround: true,
+                }}/>
+              </Entity>
+            ))}
+          </Entity>
+        );
+      })}
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── */
+/* Cascade Sidebar                                         */
+/* ─────────────────────────────────────────────────────── */
+function CascadeSidebar({item, onClose}){
+  if(!item) return null;
+  const isSector = item.type==="sector";
+  const data = item.data;
+  const accent = isSector ? CSC_PRIMARY : CSC_CITY;
+
+  return (
+    <div className="absolute top-0 right-0 h-full flex flex-col z-20"
+      style={{width:360,background:T.bg.card,borderLeft:`2px solid ${accent}`,boxShadow:"-20px 0 50px rgba(0,0,0,0.22)",fontFamily:T.font.mono}}>
+
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 shrink-0"
+        style={{borderBottom:`1px solid ${T.border.subtle}`,background:T.bg.surface}}>
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full" style={{background:accent,animation:"blink 1s step-start infinite"}}/>
+          <span className="text-[11px] font-bold tracking-[0.2em] uppercase" style={{color:accent}}>
+            {isSector?"SECTOR CASCADE":"CITY INCIDENT"}
+          </span>
+        </div>
+        <button onClick={onClose} style={{color:T.text.micro,background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button>
+      </div>
+
+      <div className="px-4 py-4 flex flex-col gap-4 overflow-y-auto">
+        {isSector ? (
+          <>
+            <div>
+              <div className="text-[8px] tracking-widest uppercase mb-1" style={{color:T.text.micro}}>PRIMARY SECTOR</div>
+              <div className="text-[15px] font-bold" style={{color:T.text.primary}}>{data.primarySectorName||data.primarySectorId}</div>
+              <div className="text-[10px] mt-0.5" style={{color:T.text.secondary}}>{data.district}</div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {[["CASCADE SCORE",data.cascadeScore],["CONFIDENCE",`${data.confidence}%`],["ETA",`${data.hoursUntil}h`],["SPREAD SECTORS",data.spatialSpread?.length||0]].map(([l,v])=>(
+                <div key={l}>
+                  <div className="text-[7px] tracking-widest uppercase mb-0.5" style={{color:T.text.micro}}>{l}</div>
+                  <div className="text-[14px] font-bold" style={{color:T.text.primary}}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {(data.triggeredAgents||[]).length>0&&(
+              <div>
+                <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>TRIGGERED AGENTS</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {data.triggeredAgents.map(a=>(
+                    <span key={a} className="text-[8px] tracking-wide uppercase px-2 py-1"
+                      style={{border:`1px solid ${AGENT_COLOR[a]||T.border.default}`,color:AGENT_COLOR[a]||T.text.secondary}}>
+                      {AGENT_GLYPH[a]} {(AGENT_META[a]?.label||a).toUpperCase()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {data.spatialSpread?.length>0&&(
+              <div>
+                <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>SPATIAL SPREAD</div>
+                {data.spatialSpread.slice(0,6).map(id=>{
+                  const s=SECTOR_BY_ID[id];
+                  return <div key={id} className="text-[10px] mb-1" style={{color:T.text.secondary}}>→ {s?.name||id} <span style={{color:T.text.micro}}>({s?.district||"—"})</span></div>;
+                })}
+              </div>
+            )}
+
+            {(data.recommendations||[]).length>0&&(
+              <div>
+                <div className="text-[8px] tracking-widests uppercase mb-2" style={{color:T.text.micro}}>RECOMMENDED ACTIONS</div>
+                {data.recommendations.map((r,i)=>(
+                  <div key={i} className="flex gap-2 text-[10px] leading-relaxed mb-2" style={{color:T.text.secondary}}>
+                    <span style={{color:CSC_PRIMARY,flexShrink:0}}>▸</span><span>{r}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {data.predictedEvent&&(
+              <div>
+                <div className="text-[8px] tracking-widest uppercase mb-1" style={{color:T.text.micro}}>PREDICTED EVENT</div>
+                <div className="text-[11px] leading-relaxed" style={{color:T.text.secondary}}>{data.predictedEvent}</div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div>
+              <div className="text-[8px] tracking-widest uppercase mb-1" style={{color:T.text.micro}}>{data.incidentId}</div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] font-bold tracking-widest uppercase px-2 py-0.5"
+                  style={{border:`1px solid ${CSC_CITY}`,color:CSC_CITY}}>{data.citywideSeverity}</span>
+                <span className="text-[10px]" style={{color:T.text.micro}}>score {data.citywideCascadeScore}</span>
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{color:T.text.secondary}}>{data.summary}</div>
+            </div>
+
+            {(data.affectedAreas||[]).length>0&&(
+              <div>
+                <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>AFFECTED AREAS</div>
+                {data.affectedAreas.map(a=>(
+                  <div key={a.primarySectorId} className="flex flex-col gap-1 py-2"
+                    style={{borderBottom:`1px solid ${T.border.subtle}`}}>
+                    <span className="text-[11px] font-bold" style={{color:T.text.primary}}>{a.district} · {a.primarySectorId}</span>
+                    <span className="text-[10px]" style={{color:T.text.secondary}}>{a.affectedBy?.description}</span>
+                    {a.secondarySectors?.length>0&&<span className="text-[9px]" style={{color:T.text.micro}}>→ {a.secondarySectors.join(", ")}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {data.mitigationMeasures?.immediateDirectives?.length>0&&(
+              <div>
+                <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>IMMEDIATE DIRECTIVES</div>
+                {data.mitigationMeasures.immediateDirectives.map((d,i)=>(
+                  <div key={i} className="flex items-start justify-between gap-2 py-1.5"
+                    style={{borderBottom:`1px solid ${T.border.subtle}`}}>
+                    <span className="text-[10px] leading-relaxed" style={{color:T.text.secondary}}>
+                      {d.action} <span style={{color:T.text.micro}}>— {d.targetAgency}</span>
+                    </span>
+                    <span className="text-[8px] tracking-widest uppercase font-bold px-1.5 py-0.5 shrink-0"
+                      style={{border:`1px solid ${T.border.default}`,color:T.text.micro}}>
+                      {d.priority?.replace("P","").replace("_"," ")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {data.mitigationMeasures?.publicAdvisories?.length>0&&(
+              <div>
+                <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>PUBLIC ADVISORIES</div>
+                {data.mitigationMeasures.publicAdvisories.map((p,i)=>(
+                  <div key={i} className="py-1.5" style={{borderBottom:`1px solid ${T.border.subtle}`}}>
+                    <div className="text-[10px] font-bold" style={{color:T.text.primary}}>{p.headline}</div>
+                    <div className="text-[9px] mt-0.5" style={{color:T.text.micro}}>{p.channel}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="text-[8px]" style={{color:T.text.micro}}>
+          {data.timestamp ? new Date(data.timestamp).toLocaleTimeString("en-IN",{hour12:false}) : "—"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── */
+/* Signal Drawer                                           */
+/* ─────────────────────────────────────────────────────── */
+function SignalDrawer({signal, cascades, cityIncident, onClose}){
+  const meta   = AGENT_META[signal.agentId];
+  const accent = AGENT_COLOR[signal.agentId]||"#FFFFFF";
+  const forecasts = fxEntries(signal);
+
+  let secRole = null;
+  for(const c of (cascades||[])){
+    if(c.primarySectorId===signal.sectorId){secRole="primary";break;}
+    if((c.spatialSpread||[]).includes(signal.sectorId)) secRole="spread";
   }
+  const cityArea = cityIncident?.affectedAreas?.find(a=>a.primarySectorId===signal.sectorId);
 
-  /* ---------------------------------------------------------------------- */
-  /* Cesium setup                                                            */
-  /* ---------------------------------------------------------------------- */
+  return (
+    <div className="absolute top-0 right-0 h-full flex flex-col z-20"
+      style={{width:340,background:T.bg.card,borderLeft:`1px solid ${T.border.default}`,boxShadow:"-20px 0 50px rgba(0,0,0,0.18)",fontFamily:T.font.mono}}>
+
+      <div className="flex items-center justify-between px-4 py-3 shrink-0"
+        style={{borderBottom:`1px solid ${T.border.subtle}`}}>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px]"
+            style={{border:`1.5px solid ${accent}`,color:accent}}>{AGENT_GLYPH[signal.agentId]}</span>
+          <div>
+            <div className="text-[10px] font-bold tracking-[0.15em] uppercase" style={{color:T.text.primary}}>
+              {meta?.label||signal.agentId?.replaceAll("_"," ")}
+            </div>
+            <div className="text-[8px] uppercase tracking-widest mt-0.5" style={{color:T.text.micro}}>{signal.domain||"UNKNOWN"}</div>
+          </div>
+        </div>
+        <button onClick={onClose} style={{color:T.text.micro,background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button>
+      </div>
+
+      <div className="px-4 py-4 flex flex-col gap-4 overflow-y-auto">
+        {secRole&&<div className="text-[9px] tracking-widest uppercase font-bold px-2 py-1 text-center"
+          style={{border:`1px solid ${secRole==="primary"?CSC_PRIMARY:CSC_SPREAD}`,color:secRole==="primary"?CSC_PRIMARY:CSC_SPREAD}}>
+          {secRole==="primary"?"⚠ CASCADE ORIGIN":"⚠ CASCADE SPREAD"}</div>}
+        {cityArea&&<div className="text-[9px] tracking-widest uppercase font-bold px-2 py-1 text-center"
+          style={{border:`1px solid ${CSC_CITY}`,color:CSC_CITY,background:"rgba(68,153,255,0.06)"}}>
+          🌐 CITY INCIDENT · {cityIncident.citywideSeverity}</div>}
+
+        <div>
+          <div className="text-[8px] tracking-widest uppercase mb-1" style={{color:T.text.micro}}>HEALTH SCORE</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-bold" style={{color:accent}}>{signal.healthScore??"—"}</span>
+            <span className="text-[10px]" style={{color:T.text.micro}}>/100</span>
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[8px] tracking-widest uppercase mb-1" style={{color:T.text.micro}}>ANOMALY</div>
+          <span className="inline-block text-[9px] tracking-widest uppercase font-bold px-2 py-1"
+            style={{border:`1px solid ${accent}`,color:signal.anomalyLevel==="critical"?T.bg.card:accent,background:signal.anomalyLevel==="critical"?accent:"transparent"}}>
+            {signal.anomalyLevel?.toUpperCase()||"UNKNOWN"}
+          </span>
+        </div>
+
+        {[["SECTOR",signal.sectorId],["DISTRICT",signal.district],["LOCATION",lbl(signal)],["AGENT",signal.agentId],...(meta?.dataAnchor?[["DATA ANCHOR",meta.dataAnchor]]:[])].map(([l,v])=>(
+          <div key={l}>
+            <div className="text-[8px] tracking-widest uppercase mb-0.5" style={{color:T.text.micro}}>{l}</div>
+            <div className="text-[10px] break-words" style={{color:T.text.secondary}}>{v??"—"}</div>
+          </div>
+        ))}
+
+        <div>
+          <div className="text-[8px] tracking-widest uppercase mb-1" style={{color:T.text.micro}}>SIGNAL</div>
+          <div className="text-[10px] leading-relaxed" style={{color:T.text.secondary}}>{signal.signal||"—"}</div>
+        </div>
+
+        {signal.metrics&&(
+          <div>
+            <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>METRICS</div>
+            <div className="flex flex-col gap-1.5 pt-2" style={{borderTop:`1px solid ${T.border.subtle}`}}>
+              {Object.entries(signal.metrics).map(([k,v])=>(
+                <div key={k} className="flex justify-between gap-4">
+                  <span className="text-[8px] break-all" style={{color:T.text.micro}}>{k}</span>
+                  <span className="text-[9px] text-right break-all" style={{color:T.text.secondary}}>
+                    {Array.isArray(v)?v.join(", "):typeof v==="object"?JSON.stringify(v):String(v)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {forecasts.map(([key,forecast])=>(
+          <div key={key}>
+            <div className="text-[8px] tracking-widest uppercase mb-2" style={{color:T.text.micro}}>
+              {key.replace(/Forecast$/,"").replace(/([a-z])([A-Z])/g,"$1 $2").toUpperCase()} FORECAST
+            </div>
+            <div className="flex flex-col gap-1.5 pt-2" style={{borderTop:`1px solid ${T.border.subtle}`}}>
+              {Object.entries(forecast).map(([fk,fv])=>(
+                <div key={fk} className="flex flex-col gap-0.5">
+                  <span className="text-[7px] uppercase tracking-wider" style={{color:T.text.micro}}>{fk}</span>
+                  <span className="text-[9px]" style={{color:T.text.secondary}}>
+                    {Array.isArray(fv)?(fv.length?fv.join(", "):"—"):String(fv)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div>
+          <div className="text-[8px] tracking-widest uppercase mb-0.5" style={{color:T.text.micro}}>UPDATED</div>
+          <div className="text-[10px]" style={{color:T.text.secondary}}>
+            {signal.timestamp ? new Date(signal.timestamp).toLocaleTimeString("en-IN",{hour12:false}) : "—"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── */
+/* Cesium pre-loader — call this from sidebar on mount    */
+/* so terrain + buildings start loading before user visits */
+/* ─────────────────────────────────────────────────────── */
+let cesiumPreloaded = false;
+export function preloadCesium(){
+  if(cesiumPreloaded) return;
+  cesiumPreloaded = true;
+  // Kick off Cesium terrain init in background
+  Cesium.createWorldTerrainAsync().catch(()=>{});
+}
+
+/* ─────────────────────────────────────────────────────── */
+/* CITY MAP                                                */
+/* ─────────────────────────────────────────────────────── */
+export default function CityMap(){
+  const {allSignals,sectorHealth,cascade,cascades,liveCityIncident,cityIncident} = useGhostnet();
+
+  const [cesiumViewer,setCesiumViewer]                     = useState(null);
+  const [ready,setReady]                                   = useState(false);
+  const [error,setError]                                   = useState(null);
+  const [selectedSignal,setSelectedSignal]                 = useState(null);
+  const [selectedSignalWithRoad,setSelectedSignalWithRoad] = useState(null);
+  const [layerMode,setLayerMode]                           = useState("agents");
+  const [selectedCascade,setSelectedCascade]               = useState(null);
+
+  const routerLocation    = useLocation();
+  const clusterDsRef      = useRef(null);
+  const roadGeomCache     = useRef({});
+  const viewerInitDone    = useRef(false);
+
   const anomalySignals = useMemo(
-    () =>
-      (allSignals || []).filter(
-        (signal) =>
-          signal.anomalyLevel !== "nominal" &&
-          signal?.location &&
-          typeof signal.location.lat === "number" &&
-          typeof signal.location.lng === "number"
-      ),
+    ()=>(allSignals||[]).filter(s=>s.anomalyLevel!=="nominal"&&s?.location&&typeof s.location.lat==="number"&&typeof s.location.lng==="number"),
     [allSignals]
   );
-  useEffect(() => {
-    if (!cesiumViewer) return;
 
-    if (!Cesium.Ion.defaultAccessToken || Cesium.Ion.defaultAccessToken.length < 20) {
-      setError("No Cesium ion token configured.");
-      return;
-    }
+  const activeCascades     = useMemo(()=>cascades||(cascade?[cascade]:[]),[cascades,cascade]);
+  const activeCityIncident = cityIncident||liveCityIncident;
 
+  const selectedSectorCascadeId = selectedCascade?.type==="sector" ? selectedCascade.data?.primarySectorId : null;
+  const cityIncidentSelected    = selectedCascade?.type==="city";
+
+  /* ── Group signals by sector+location bucket to detect overlaps ── */
+  const signalsByBucket = useMemo(()=>{
+    const map = new Map();
+    anomalySignals.forEach(s=>{
+      // bucket by sector + rounded lat/lng (50m grid)
+      const bLat = Math.round(s.location.lat*1000);
+      const bLng = Math.round(s.location.lng*1000);
+      const key = `${s.sectorId}:${bLat}:${bLng}`;
+      if(!map.has(key)) map.set(key,[]);
+      map.get(key).push(s);
+    });
+    return map;
+  },[anomalySignals]);
+
+  /* Flat list of signals with their offset index assigned */
+  const signalsWithOffset = useMemo(()=>{
+    const result = [];
+    signalsByBucket.forEach(group=>{
+      group.forEach((s,i)=> result.push({signal:s, offsetIndex:i}));
+    });
+    return result;
+  },[signalsByBucket]);
+
+  /* ── Road snap ── */
+  async function fetchNearestRoad(signal){
+    const loc=signal?.location; if(!loc) return null;
+    const key=`${signal.sectorId}:${signal.agentId}`;
+    if(roadGeomCache.current[key]) return roadGeomCache.current[key];
+    try{
+      const res=await fetch(`https://router.project-osrm.org/nearest/v1/driving/${loc.lng},${loc.lat}?number=3&generate_hints=false`);
+      const data=await res.json();
+      if(data.code!=="Ok"||!data.waypoints?.length) return null;
+      const snapped=data.waypoints[0].location, off=0.003;
+      const rr=await fetch(`https://router.project-osrm.org/route/v1/driving/${snapped[0]-off},${snapped[1]};${snapped[0]+off},${snapped[1]}?overview=full&geometries=geojson&generate_hints=false`);
+      const rd=await rr.json();
+      if(rd.code!=="Ok"||!rd.routes?.[0]?.geometry) return null;
+      roadGeomCache.current[key]=rd.routes[0].geometry;
+      return rd.routes[0].geometry;
+    }catch(e){return null;}
+  }
+
+  useEffect(()=>{
+    if(!selectedSignal){setSelectedSignalWithRoad(null);return;}
+    const roadAgents=["transit_fleet","road_corridor","traffic_news"];
+    if(!roadAgents.includes(selectedSignal.agentId)){setSelectedSignalWithRoad(selectedSignal);return;}
+    setSelectedSignalWithRoad(selectedSignal);
+    fetchNearestRoad(selectedSignal).then(geo=>{if(geo)setSelectedSignalWithRoad({...selectedSignal,geometry:geo});});
+  },[selectedSignal]); // eslint-disable-line
+
+  /* ── Cesium setup — runs once when viewer mounts ── */
+  useEffect(()=>{
+    if(!cesiumViewer||viewerInitDone.current) return;
+    viewerInitDone.current = true;
     let cancelled = false;
 
-    async function setup() {
-      try {
+    async function setup(){
+      try{
         const terrain = await Cesium.createWorldTerrainAsync();
-        if (cancelled) return;
+        if(cancelled) return;
         cesiumViewer.terrainProvider = terrain;
 
         const buildings = await Cesium.createOsmBuildingsAsync();
-        if (cancelled) return;
+        if(cancelled) return;
         buildings.maximumScreenSpaceError = 32;
         cesiumViewer.scene.primitives.add(buildings);
 
         cesiumViewer.scene.requestRenderMode = true;
         cesiumViewer.scene.maximumRenderTimeChange = Infinity;
 
-        const controller = cesiumViewer.scene.screenSpaceCameraController;
-        controller.enableInertia = true;
-        controller.inertiaZoom = 0.8;
-        controller.zoomFactor = 3;
-        controller.enableRotate = true;
-        controller.enableTranslate = true;
-        controller.enableZoom = true;
-        controller.enableTilt = true;
-        controller.enableLook = true;
-        controller.minimumZoomDistance = 800;
-        controller.maximumZoomDistance = 120000;
+        const ctrl = cesiumViewer.scene.screenSpaceCameraController;
+        ctrl.enableInertia = true; ctrl.inertiaZoom = 0.8; ctrl.zoomFactor = 3;
+        ctrl.enableRotate = ctrl.enableTranslate = ctrl.enableZoom = ctrl.enableTilt = ctrl.enableLook = true;
+        ctrl.minimumZoomDistance = 800;
+        ctrl.maximumZoomDistance = 120000;
+
+        // Fly to Delhi immediately
+        cesiumViewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(DELHI_VIEW.lon, DELHI_VIEW.lat, DELHI_VIEW.height),
+          orientation: { heading:Cesium.Math.toRadians(0), pitch:Cesium.Math.toRadians(-58), roll:0 },
+          duration: 0,
+        });
+
         setReady(true);
-        flyTo("delhi", cesiumViewer, 0);
-      } catch (err) {
-        console.error("[GHOSTNET] Cesium setup failed:", err);
-        setError(err?.message || "Failed to load Cesium city tiles.");
-      }
+      }catch(e){ setError(e?.message||"Cesium failed."); }
     }
-
     setup();
-    return () => { cancelled = true; };
-  }, [cesiumViewer]);
+    return()=>{ cancelled=true; };
+  },[cesiumViewer]);
 
-  /* ---------------------------------------------------------------------- */
-  /* Continuous render loop — only while a cascade is active, so the        */
-  /* pulsing dark-red sector fill / marker actually animates. requestRender */
-  /* -mode scenes otherwise only redraw on camera/entity changes.           */
-  /* ---------------------------------------------------------------------- */
-
-  useEffect(() => {
-    if (!cesiumViewer || !ready || !cascade) return;
+  /* ── Pulse render loop ── */
+  useEffect(()=>{
+    if(!cesiumViewer||!ready) return;
     let rafId;
-    function loop() {
-      cesiumViewer.scene.requestRender();
-      rafId = requestAnimationFrame(loop);
-    }
+    function loop(){ cesiumViewer.scene.requestRender(); rafId=requestAnimationFrame(loop); }
     rafId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafId);
-  }, [cesiumViewer, ready, cascade]);
+    return()=>cancelAnimationFrame(rafId);
+  },[cesiumViewer,ready]);
 
-  /* ---------------------------------------------------------------------- */
-  /* Focus-on-navigate — Dashboard's "View on Map" button sends the target  */
-  /* sector via router state; fly there and open its worst signal's drawer  */
-  /* if one exists, so the sector isn't just centered but also explained.   */
-  /* ---------------------------------------------------------------------- */
-
-  useEffect(() => {
-    if (!ready || !cesiumViewer) return;
-    const focusSectorId = location.state?.focusSectorId;
-    if (!focusSectorId) return;
-
-    const sector = SECTOR_BY_ID[focusSectorId];
-    if (!sector) return;
-
+  /* ── Focus-on-navigate ── */
+  useEffect(()=>{
+    if(!ready||!cesiumViewer) return;
+    const fid = routerLocation.state?.focusSectorId; if(!fid) return;
+    const sector = SECTOR_BY_ID[fid]; if(!sector) return;
     cesiumViewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(sector.lng, sector.lat, 2200),
-      orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-55), roll: 0 },
+      destination: Cesium.Cartesian3.fromDegrees(sector.lng,sector.lat,2200),
+      orientation: { heading:Cesium.Math.toRadians(0), pitch:Cesium.Math.toRadians(-55), roll:0 },
       duration: 2,
     });
+    const s = anomalySignals.find(s=>s.sectorId===fid)||null;
+    if(s) setSelectedSignal(s);
+    window.history.replaceState({},document.title);
+  },[ready,cesiumViewer,routerLocation.state,anomalySignals]);
 
-    const sectorSignal = anomalySignals.find((s) => s.sectorId === focusSectorId) || null;
-    if (sectorSignal) setSelectedSignal(sectorSignal);
+  /* ── Clustering off ── */
+  useEffect(()=>{
+    if(!ready||!cesiumViewer) return;
+    const ds = clusterDsRef.current?.cesiumElement; if(!ds) return;
+    ds.clustering.enabled = false;
+  },[ready,cesiumViewer,allSignals]);
 
-    // consume the nav state so re-rendering (e.g. clearing the drawer)
-    // doesn't keep re-triggering the fly-to
-    window.history.replaceState({}, document.title);
-  }, [ready, cesiumViewer, location.state, anomalySignals]);
-  /* ---------------------------------------------------------------------- */
-  /* Clustering — nearby anomaly badges collapse into one numbered sprite;   */
-  /* clicking it flies the camera in until Cesium naturally un-clusters and  */
-  /* reveals each problem individually.                                     */
-  /* ---------------------------------------------------------------------- */
+  const sectorEntries = useMemo(()=>Object.entries(sectorHealth||{}),[sectorHealth]);
 
-  useEffect(() => {
-    if (!ready || !cesiumViewer) return;
-
-    const ds = clusterDsRef.current?.cesiumElement;
-    if (!ds) return;
-
-    ds.clustering.enabled = true;
-    ds.clustering.pixelRange = 72;
-    ds.clustering.minimumClusterSize = 2;
-
-    const removeListener = ds.clustering.clusterEvent.addEventListener((clusteredEntities, cluster) => {
-      cluster.label.show = false;
-      cluster.billboard.show = true;
-      cluster.billboard.image = buildClusterIcon(clusteredEntities.length, T.severity.critical.bg);
-      cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
-      cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-      cluster.billboard.id = {
-        ghostnetCluster: true,
-        positions: clusteredEntities
-          .map((e) => e.position?.getValue(Cesium.JulianDate.now()))
-          .filter(Boolean),
-      };
-    });
-
-    if (!clusterHandlerRef.current) {
-      const handler = new Cesium.ScreenSpaceEventHandler(cesiumViewer.scene.canvas);
-      handler.setInputAction((movement) => {
-        const picked = cesiumViewer.scene.pick(movement.position);
-        if (Cesium.defined(picked) && picked.id?.ghostnetCluster && picked.id.positions?.length) {
-          const sphere = Cesium.BoundingSphere.fromPoints(picked.id.positions);
-          cesiumViewer.camera.flyToBoundingSphere(sphere, {
-            duration: 1.1,
-            offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-45), Math.max(sphere.radius * 3.5, 600)),
-          });
-        }
-      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-      clusterHandlerRef.current = handler;
-    }
-
-    return () => { removeListener(); };
-  }, [ready, cesiumViewer, allSignals]);
-
-  useEffect(() => {
-    return () => {
-      clusterHandlerRef.current?.destroy();
-      clusterHandlerRef.current = null;
-    };
-  }, []);
-
-  /* ---------------------------------------------------------------------- */
-  /* Camera                                                                  */
-  /* ---------------------------------------------------------------------- */
-
-  function flyTo(cityKey, viewerOverride, duration = 2.5) {
-    const viewer = viewerOverride || cesiumViewer;
-    if (!viewer) return;
-    const city = CITIES[cityKey];
-    if (!city) return;
-
-    viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(city.lon, city.lat, city.height),
-      orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-58), roll: 0 },
-      duration,
-    });
-    setActiveCity(cityKey);
+  function handleSignalClick(signal){
+    if(layerMode!=="agents") return;
+    setSelectedCascade(null);
+    setSelectedSignal(prev=>sameSignal(prev,signal)?null:signal);
   }
+  function handleCloseSignal(){ setSelectedSignal(null); setSelectedSignalWithRoad(null); }
 
-  /* ---------------------------------------------------------------------- */
-  /* Only non-nominal signals get a marker — the 39-sector hexagon layer     */
-  /* already shows the full mesh is alive.                                  */
-  /* ---------------------------------------------------------------------- */
-
-
-
-  const sectorEntries = useMemo(() => Object.entries(sectorHealth || {}), [sectorHealth]);
-
-  /* ---------------------------------------------------------------------- */
-  /* Selection — clicking a pin (or its zone, once open) toggles selection.  */
-  /* Selecting swaps the pin for the rich per-agent zone + opens the drawer. */
-  /* Closing the drawer (or clicking the zone again) swaps it back to a pin. */
-  /* ---------------------------------------------------------------------- */
-
-  function handleSignalClick(signal) {
-    setSelectedSignal((prev) => (prev && isSameSignal(prev, signal) ? null : signal));
-  }
-
-  function handleCloseDrawer() {
+  function handleSectorCascadeSelect(casc){
     setSelectedSignal(null);
+    setSelectedCascade(casc ? {type:"sector",data:casc} : null);
+  }
+  function handleCityIncidentSelect(){
+    if(!activeCityIncident) return;
+    setSelectedSignal(null);
+    setSelectedCascade(prev=>prev?.type==="city" ? null : {type:"city",data:activeCityIncident});
+  }
+  function handleCloseCascadeSidebar(){
+    setSelectedCascade(null);
   }
 
   const visibleBadgeSignals = useMemo(
-    () => anomalySignals.filter((signal) => !isSameSignal(signal, selectedSignal)),
-    [anomalySignals, selectedSignal]
+    ()=>signalsWithOffset.filter(({signal})=>!sameSignal(signal,selectedSignal)),
+    [signalsWithOffset,selectedSignal]
   );
 
-  /* ---------------------------------------------------------------------- */
-  /* Render                                                                  */
-  /* ---------------------------------------------------------------------- */
+  function viewerRefCallback(e){ const v=e?.cesiumElement; if(v) setCesiumViewer(v); }
 
+  const showCascadeSidebar = !!selectedCascade;
+  const showSignalDrawer   = !showCascadeSidebar && !!selectedSignal;
+
+  /* ─────────────────────────────────────────────────── */
   return (
-    <div className="relative h-full w-full overflow-hidden" style={{ fontFamily: T.font.mono, background: T.bg.root }}>
-      <Viewer
-        ref={viewerRefCallback}
-        timeline={false}
-        animation={false}
-        baseLayerPicker={false}
-        homeButton={false}
-        sceneModePicker={false}
-        navigationHelpButton={false}
-        geocoder={false}
-        fullscreenButton={false}
-        infoBox={false}
-        selectionIndicator={false}
-        style={{ position: "absolute", inset: 0 }}
+    <div className="relative h-full w-full overflow-hidden" style={{fontFamily:T.font.mono,background:T.bg.root}}>
+      <Viewer ref={viewerRefCallback}
+        timeline={false} animation={false} baseLayerPicker={false}
+        homeButton={false} sceneModePicker={false} navigationHelpButton={false}
+        geocoder={false} fullscreenButton={false} infoBox={false} selectionIndicator={false}
+        style={{position:"absolute",inset:0}}
       >
-        {/* 39-sector boundary mesh — always visible, colored by worst signal,
-            dark-red pulsing for any sector that's part of the active cascade */}
-        {ready && sectorEntries.map(([sectorId, health]) => {
-          const sector = SECTOR_BY_ID[sectorId];
-          if (!sector) return null;
-          // Focus mode: once a signal is selected, hide unrelated sector
-          // hexagons so its zone isn't competing with a dozen overlapping
-          // outlines. Its own sector and any active cascade sectors stay.
-          const role = cascadeRoleFor(cascade, sectorId);
-          const isRelevant = !selectedSignal || sectorId === selectedSignal.sectorId || role;
-          if (!isRelevant) return null;
-          return (
-            <SectorBoundary
-              key={`boundary-${sectorId}`}
-              sector={sector}
-              health={health}
-              cascadeRole={role}
-            />
-          );
-        })}
+        {/* Delhi boundary — always visible */}
+        {ready && <DelhiBoundary/>}
 
-        {ready && cascade && <CascadeRipple cascade={cascade} />}
-
-        {/* Selected signal: pin is swapped out for its real per-agent zone
-            (plume / flood polygon / road line / power spokes / etc). */}
-        {ready && selectedSignal?.location && (
-          <Entity key={`selection-${selectedSignal.sectorId}-${selectedSignal.agentId}`}>
-            <AgentVisualization
-              signal={selectedSignal}
-              triggered={triggeredAgent(cascade, selectedSignal)}
-              onClick={handleSignalClick}
-            />
-          </Entity>
+        {/* ── AGENTS LAYER ── */}
+        {ready && layerMode==="agents" && (
+          <>
+            {selectedSignalWithRoad?.location && (
+              <Entity key={`sel-${selectedSignalWithRoad.sectorId}-${selectedSignalWithRoad.agentId}`}>
+                <AgentViz
+                  signal={selectedSignalWithRoad}
+                  triggered={isTriggered(activeCascades,selectedSignalWithRoad)}
+                  onClick={handleSignalClick}
+                />
+              </Entity>
+            )}
+            <CustomDataSource ref={clusterDsRef} name="anomalies">
+              {visibleBadgeSignals.map(({signal,offsetIndex},i)=>(
+                <AnomalyBadge
+                  key={`badge-${signal.sectorId}-${signal.agentId}-${i}`}
+                  signal={signal}
+                  offsetIndex={offsetIndex}
+                  highlighted={isTriggered(activeCascades,signal)}
+                  dimmed={!!selectedSignal}
+                  onClick={handleSignalClick}
+                />
+              ))}
+            </CustomDataSource>
+          </>
         )}
 
-        {/* Clustered layer: the always-on clickable anomaly pins, minus
-            whichever one is currently selected (shown as a zone above instead). */}
-        {ready && (
-          <CustomDataSource ref={clusterDsRef} name="anomalies">
-            {visibleBadgeSignals.map((signal, index) => (
-              <AnomalyBadge
-                key={`badge-${signal.sectorId}-${signal.agentId}-${index}`}
-                signal={signal}
-                highlighted={triggeredAgent(cascade, signal)}
-                dimmed={!!selectedSignal}
-                onClick={handleSignalClick}
-              />
-            ))}
-          </CustomDataSource>
+        {/* ── SECTOR CASCADE LAYER ── */}
+        {ready && layerMode==="sector" && (
+          <SectorCascadeLayer
+            cascades={activeCascades}
+            selectedId={selectedSectorCascadeId}
+            onSelect={handleSectorCascadeSelect}
+          />
+        )}
+
+        {/* ── CITY CASCADE LAYER ── */}
+        {ready && layerMode==="city" && (
+          <CityCascadeLayer
+            cityIncident={activeCityIncident}
+            isSelected={cityIncidentSelected}
+            onSelect={handleCityIncidentSelect}
+          />
         )}
       </Viewer>
 
-      {/* Top controls */}
+      {/* ── TOP CONTROLS — layer toggle only, no city switcher ── */}
       <div className="absolute top-4 left-4 flex gap-2 z-10">
-        {Object.keys(CITIES).map((key) => (
-          <button
-            key={key}
-            onClick={() => flyTo(key)}
-            disabled={!ready}
-            className="text-[10px] tracking-widest uppercase px-3 py-1.5 font-bold transition-all"
-            style={{
-              border: `1px solid ${T.border.default}`,
-              background: activeCity === key ? T.text.primary : T.bg.card,
-              color: activeCity === key ? T.bg.card : T.text.secondary,
-              fontFamily: T.font.mono,
-              cursor: ready ? "pointer" : "not-allowed",
-              opacity: ready ? 1 : 0.5,
-            }}
-          >
-            {CITIES[key].name}
-          </button>
-        ))}
+        {[
+          {mode:"agents", label:"◎ AGENTS",         color:T.text.primary},
+          {mode:"sector", label:"⚠ SECTOR CASCADE",  color:CSC_PRIMARY},
+          {mode:"city",   label:"🌐 CITY CASCADE",   color:CSC_CITY},
+        ].map(({mode,label,color})=>{
+          const isActive = layerMode===mode;
+          return (
+            <button key={mode}
+              onClick={()=>{ setLayerMode(mode); setSelectedSignal(null); setSelectedCascade(null); }}
+              disabled={!ready}
+              className="text-[10px] tracking-widest uppercase px-3 py-1.5 font-bold"
+              style={{
+                border:`1px solid ${isActive?color:T.border.default}`,
+                background: isActive ? color : T.bg.card,
+                color: isActive ? T.bg.card : T.text.secondary,
+                fontFamily: T.font.mono,
+                cursor: ready?"pointer":"not-allowed",
+                opacity: ready?1:0.5,
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
-
-      {/* Cascade banner */}
-      {cascade && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-5 py-2 z-10" style={{ background: T.cascade.bg, border: `1px solid ${T.cascade.border}` }}>
-          <span className="inline-block w-[6px] h-[6px] rounded-full" style={{ background: T.cascade.text, animation: "blink 0.9s step-start infinite" }} />
-          <span className="text-[9px] tracking-[0.25em] uppercase font-bold" style={{ color: T.cascade.text }}>
-            CASCADE · {cascade.primarySectorName || cascade.primarySectorId}
-          </span>
-          <span className="text-[9px]" style={{ color: T.text.muted }}>
-            {cascade.confidence ?? "—"}% CONF · {cascade.hoursUntil ?? "—"}H ETA
-          </span>
+      {/* ── LEGEND ── */}
+      {layerMode==="agents" && (
+        <div className="absolute bottom-0 left-0 z-10 px-4 py-3"
+          style={{background:T.bg.card,border:`1px solid ${T.border.default}`,width:400}}>
+          <div className="text-[8px] tracking-[0.2em] uppercase mb-2" style={{color:T.text.micro}}>AGENT SIGNAL TYPES</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            {Object.entries(AGENT_META).map(([agentId,meta])=>(
+              <div key={agentId} className="flex items-center gap-1.5">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px]"
+                  style={{border:`1.5px solid ${AGENT_COLOR[agentId]}`,color:AGENT_COLOR[agentId]}}>
+                  {AGENT_GLYPH[agentId]}
+                </span>
+                <span className="text-[7px] tracking-wide" style={{color:T.text.secondary}}>
+                  {meta.label.toUpperCase()}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Legend */}
-      <div className="absolute bottom-0 left-0 z-10 px-4 py-3" style={{ background: T.bg.card, border: `1px solid ${T.border.default}`, width: 400 }}>
-  <div className="text-[8px] tracking-[0.2em] uppercase mb-2" style={{ color: T.text.micro }}>AGENT SIGNAL TYPES</div>
-  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-    {Object.entries(AGENT_META).map(([agentId, meta]) => (
-      <div key={agentId} className="flex items-center gap-1.5">
-        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px]" style={{ border: `1.5px solid ${AGENT_COLOR[agentId]}`, color: AGENT_COLOR[agentId] }}>
-          {AGENT_GLYPH[agentId]}
-        </span>
-        <span className="text-[7px] tracking-wide" style={{ color: T.text.secondary }}>{meta.label.toUpperCase()}</span>
-      </div>
-    ))}
-  </div>
-</div>
+      {layerMode==="sector" && (
+        <div className="absolute bottom-0 left-0 z-10 px-4 py-3"
+          style={{background:T.bg.card,border:`1px solid ${T.border.default}`,minWidth:260}}>
+          <div className="text-[8px] tracking-[0.2em] uppercase mb-2" style={{color:T.text.micro}}>SECTOR CASCADE</div>
+          <div className="text-[11px] font-bold" style={{color:CSC_PRIMARY}}>{activeCascades.length} ACTIVE</div>
+          <div className="text-[9px] mt-1" style={{color:T.text.micro}}>
+            Click <span style={{color:CSC_PRIMARY}}>!</span> pin → see details + brighter spread lines
+          </div>
+        </div>
+      )}
 
-      {/* Selected signal drawer */}
-      {selectedSignal && <SignalDrawer signal={selectedSignal} cascade={cascade} onClose={handleCloseDrawer} />}
+      {layerMode==="city" && (
+        <div className="absolute bottom-0 left-0 z-10 px-4 py-3"
+          style={{background:T.bg.card,border:`1px solid ${T.border.default}`,minWidth:260}}>
+          <div className="text-[8px] tracking-[0.2em] uppercase mb-2" style={{color:T.text.micro}}>CITY CASCADE</div>
+          {activeCityIncident ? (
+            <>
+              <div className="text-[11px] font-bold" style={{color:CSC_CITY}}>
+                {activeCityIncident.citywideSeverity} · {activeCityIncident.affectedAreas?.length} AREAS
+              </div>
+              <div className="text-[9px] mt-1" style={{color:T.text.micro}}>
+                Click <span style={{color:CSC_CITY}}>C</span> pin → see full incident + brighter connections
+              </div>
+            </>
+          ) : (
+            <div className="text-[10px]" style={{color:T.text.micro}}>No city incident active</div>
+          )}
+        </div>
+      )}
+
+      {/* ── SIDEBARS ── */}
+      {showCascadeSidebar && (
+        <CascadeSidebar item={selectedCascade} onClose={handleCloseCascadeSidebar}/>
+      )}
+      {showSignalDrawer && (
+        <SignalDrawer
+          signal={selectedSignal}
+          cascades={activeCascades}
+          cityIncident={activeCityIncident}
+          onClose={handleCloseSignal}
+        />
+      )}
 
       {/* Loading */}
       {!ready && !error && (
-        <div className="absolute inset-0 flex items-center justify-center z-10" style={{ color: T.text.primary, background: "rgba(0,0,0,0.35)" }}>
+        <div className="absolute inset-0 flex items-center justify-center z-10"
+          style={{color:T.text.primary,background:"rgba(0,0,0,0.40)"}}>
           <div className="text-center">
-            <div className="text-[10px] tracking-[0.3em] uppercase">INITIALIZING SPATIAL ENGINE</div>
-            <div className="text-[8px] tracking-widest mt-2" style={{ color: T.text.micro }}>LOADING TERRAIN · 39-SECTOR MESH · CASCADE MODEL</div>
+            <div className="text-[10px] tracking-[0.3em] uppercase" style={{fontFamily:T.font.mono}}>
+              INITIALIZING SPATIAL ENGINE
+            </div>
+            <div className="text-[8px] tracking-widest mt-2" style={{color:T.text.micro,fontFamily:T.font.mono}}>
+              TERRAIN · DELHI BOUNDARY · 39 SECTORS
+            </div>
           </div>
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center px-10 text-center z-10" style={{ color: T.severity.critical.bg, background: "rgba(0,0,0,0.75)" }}>
+        <div className="absolute inset-0 flex items-center justify-center px-10 text-center z-10"
+          style={{color:"#FF4040",background:"rgba(0,0,0,0.80)"}}>
           <div>
-            <div className="text-xs font-bold tracking-widest uppercase mb-2">CESIUM INITIALIZATION FAILED</div>
+            <div className="text-xs font-bold tracking-widest uppercase mb-2">CESIUM FAILED</div>
             <div className="text-[10px]">{error}</div>
           </div>
         </div>
       )}
 
-      <style>{`@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }`}</style>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Drawer — right-side detail panel                                          */
-/* -------------------------------------------------------------------------- */
-
-function SignalDrawer({ signal, cascade, onClose }) {
-  const style = getSeverityStyle(severityKey(signal.anomalyLevel));
-  const color = style.bg || style.text;
-  const meta = AGENT_META[signal.agentId];
-  const forecasts = forecastEntries(signal);
-  const role = cascadeRoleFor(cascade, signal.sectorId);
-
-  return (
-    <div className="absolute top-0 right-0 h-full flex flex-col z-20" style={{ width: 340, background: T.bg.card, borderLeft: `1px solid ${T.border.default}`, boxShadow: "-20px 0 50px rgba(0,0,0,0.16)" }}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${T.border.subtle}` }}>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px]" style={{ border: `1.5px solid ${AGENT_COLOR[signal.agentId]}`, color: AGENT_COLOR[signal.agentId] }}>
-            {AGENT_GLYPH[signal.agentId]}
-          </span>
-          <div>
-            <div className="text-[10px] font-bold tracking-[0.15em] uppercase" style={{ color: T.text.primary }}>
-              {meta?.label || signal.agentId?.replaceAll("_", " ")}
-            </div>
-            <div className="text-[8px] uppercase tracking-widest mt-0.5 flex items-center gap-2" style={{ color: T.text.micro }}>
-              <span>{signal.domain || "UNKNOWN"}</span>
-              {signal.isLiveAnchor && (
-                <span className="flex items-center gap-1" style={{ color: T.severity.good.text }}>
-                  <span className="inline-block w-[5px] h-[5px] rounded-full" style={{ background: T.severity.good.text }} />
-                  LIVE
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-        <button onClick={onClose} className="text-xs" style={{ color: T.text.micro, background: "none", border: "none", cursor: "pointer" }}>✕</button>
-      </div>
-
-      {/* Content */}
-      <div className="px-4 py-4 flex flex-col gap-5 overflow-y-auto">
-
-        {role && (
-          <div className="text-[9px] tracking-widest uppercase font-bold px-2 py-1 text-center" style={{ border: `1px solid ${role === "primary" ? CASCADE_RED_PRIMARY : CASCADE_RED_SPREAD}`, color: role === "primary" ? CASCADE_RED_PRIMARY : CASCADE_RED_SPREAD }}>
-            {role === "primary" ? "⚠ CASCADE ORIGIN SECTOR" : "⚠ CASCADE SPREAD SECTOR"}
-          </div>
-        )}
-
-        {/* Health */}
-        <div>
-          <div className="text-[8px] tracking-widest uppercase mb-1" style={{ color: T.text.micro }}>HEALTH SCORE</div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-bold" style={{ color }}>{signal.healthScore ?? "—"}</span>
-            <span className="text-[10px]" style={{ color: T.text.micro }}>/100</span>
-          </div>
-        </div>
-
-        {/* Status */}
-        <div>
-          <div className="text-[8px] tracking-widest uppercase mb-1" style={{ color: T.text.micro }}>ANOMALY</div>
-          <span className="inline-block text-[9px] tracking-widest uppercase font-bold px-2 py-1" style={{ border: `1px solid ${color}`, color }}>
-            {signal.anomalyLevel || "UNKNOWN"}
-          </span>
-        </div>
-
-        <InfoRow label="SECTOR" value={`${signal.sectorId} — ${labelText(signal)}`} />
-        <InfoRow label="DISTRICT" value={signal.district} />
-        <InfoRow label="HAZARD RADIUS" value={signal.location?.radiusMeters ? `${signal.location.radiusMeters}m` : "—"} />
-        <InfoRow label="AGENT" value={signal.agentId} />
-        {meta?.dataAnchor && <InfoRow label="DATA ANCHOR" value={meta.dataAnchor} />}
-
-        {/* Signal */}
-        <div>
-          <div className="text-[8px] tracking-widest uppercase mb-2" style={{ color: T.text.micro }}>SIGNAL</div>
-          <div className="text-[10px] leading-relaxed" style={{ color: T.text.secondary }}>{signal.signal || "No signal description"}</div>
-        </div>
-
-        {/* Metrics */}
-        {signal.metrics && (
-          <div>
-            <div className="text-[8px] tracking-widest uppercase mb-2" style={{ color: T.text.micro }}>RAW METRICS</div>
-            <div className="flex flex-col gap-2 pt-2" style={{ borderTop: `1px solid ${T.border.subtle}` }}>
-              {Object.entries(signal.metrics).map(([key, value]) => (
-                <div key={key} className="flex justify-between gap-4">
-                  <span className="text-[8px] break-all" style={{ color: T.text.micro }}>{key}</span>
-                  <span className="text-[9px] text-right break-all" style={{ color: T.text.secondary }}>
-                    {Array.isArray(value) ? (value.length ? value.join(", ") : "—") : typeof value === "object" ? JSON.stringify(value) : String(value)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Forecast — auto-detects any "<x>Forecast" key, always last */}
-        {forecasts.map(([key, forecast]) => (
-          <div key={key}>
-            <div className="text-[8px] tracking-widest uppercase mb-2" style={{ color: T.text.micro }}>{forecastTitle(key)}</div>
-            <div className="flex flex-col gap-2 pt-2" style={{ borderTop: `1px solid ${T.border.subtle}` }}>
-              {Object.entries(forecast).map(([fKey, fValue]) => (
-                <div key={fKey} className="flex flex-col gap-0.5">
-                  <span className="text-[7px] uppercase tracking-wider" style={{ color: T.text.micro }}>{fKey}</span>
-                  <span className="text-[9px]" style={{ color: T.text.secondary }}>
-                    {Array.isArray(fValue) ? (fValue.length ? fValue.join(", ") : "—") : String(fValue)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        <InfoRow label="UPDATED" value={signal.timestamp ? new Date(signal.timestamp).toLocaleTimeString("en-IN", { hour12: false }) : "—"} />
-      </div>
-    </div>
-  );
-}
-
-function InfoRow({ label, value }) {
-  return (
-    <div>
-      <div className="text-[8px] tracking-widest uppercase mb-1" style={{ color: T.text.micro }}>{label}</div>
-      <div className="text-[10px] break-words" style={{ color: T.text.secondary }}>{value ?? "—"}</div>
+      <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}`}</style>
     </div>
   );
 }

@@ -1,90 +1,202 @@
+import { useEffect, useState } from 'react';
 import { useGhostnet } from '../../context/GhostnetContext';
 import { useReplayMode } from '../../context/ReplayContext';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { T } from '../../lib/theme';
-import { ALL_AGENT_IDS } from '../../lib/schema';
+import {
+  T,
+  getInitialTheme,
+  applyTheme,
+} from '../../lib/theme';
 
 export default function Topbar() {
-  const { connected, cascade } = useGhostnet();
+  const { connected } = useGhostnet();
   const { enterReplay, exitReplay } = useReplayMode();
   const navigate = useNavigate();
   const location = useLocation();
+
   const isReplay = location.pathname === '/replay';
+
+  const [theme, setTheme] = useState(getInitialTheme);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    const nextTheme = theme === 'dark' ? 'monochrome' : 'dark';
+
+    setTheme(nextTheme);
+    applyTheme(nextTheme);
+  }
 
   return (
     <header
-      className="h-11 flex items-center justify-between px-3 sm:px-6 shrink-0 gap-2"
-      style={{ background: T.bg.card, borderBottom: `1px solid ${T.border.default}`, fontFamily: T.font.mono }}
+      className="h-12 flex items-center justify-between px-4 sm:px-7 shrink-0"
+      style={{
+        background: T.bg.card,
+        borderBottom: `1.5px solid ${T.border.strong}`,
+        fontFamily: T.font.mono,
+      }}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-        <span className="text-sm font-bold tracking-[0.3em] uppercase shrink-0" style={{ color: T.text.primary }}>
-          GHOST<span style={{ color: T.text.muted }}>NET</span>
-        </span>
-        <span className="hidden md:inline text-[10px] tracking-widest uppercase truncate" style={{ color: T.text.micro }}>
+      {/* ─────────────────────────────────────────────────────────────
+          WORDMARK
+      ───────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className="text-[13px] font-bold tracking-[0.28em] uppercase"
+            style={{ color: T.text.primary }}
+          >
+            GHOSTNET
+          </span>
+        </div>
+
+        <span
+          className="hidden md:inline text-[9px] tracking-[0.2em] uppercase truncate pl-3"
+          style={{
+            color: T.text.micro,
+            borderLeft: `1px solid ${T.border.subtle}`,
+          }}
+        >
           Urban Early Warning Engine
         </span>
       </div>
 
-      {/* Cascade alarm — only on live mode, hidden on very small screens to keep the toggle usable */}
-      {cascade && !isReplay && (
+      {/* ─────────────────────────────────────────────────────────────
+          RIGHT CLUSTER
+      ───────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 sm:gap-5 shrink-0">
+
+        {/* ─────────────────────────────────────────────────────────
+            LIVE / REPLAY
+        ───────────────────────────────────────────────────────── */}
         <div
-          className="hidden sm:flex items-center gap-3 px-4 py-1 text-xs font-bold tracking-widest uppercase truncate max-w-[40%]"
-          style={{ background: T.cascade.bg, color: T.cascade.text }}
+          className="flex items-center p-0.5"
+          style={{
+            background: T.bg.surface,
+            border: `1px solid ${T.border.subtle}`,
+          }}
         >
-          ▲ CASCADE — {cascade.triggeredAgents?.length ?? 0}/{ALL_AGENT_IDS.length} AGENTS
-        </div>
-      )}
-
-      {/* Right */}
-      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-        {/* LIVE / REPLAY toggle */}
-        <div className="flex items-center" style={{ border: `1px solid ${T.border.default}` }}>
           <button
-            onClick={() => { exitReplay(); navigate('/'); }}
-            className="text-[9px] tracking-widest uppercase px-2 sm:px-3 py-1.5 transition-all font-bold"
+            onClick={() => {
+              exitReplay();
+              navigate('/');
+            }}
+            className="text-[9px] tracking-[0.15em] uppercase px-3 py-1.5 font-bold transition-all"
             style={{
-              background: !isReplay ? T.text.primary : 'transparent',
-              color: !isReplay ? T.bg.card : T.text.muted,
+              background: !isReplay ? T.bg.card : 'transparent',
+              color: !isReplay ? T.text.primary : T.text.muted,
               fontFamily: T.font.mono,
-              borderRight: `1px solid ${T.border.default}`,
+              boxShadow: !isReplay
+                ? '0 1px 2px rgba(0,0,0,0.12)'
+                : 'none',
             }}
           >
-            LIVE
+            Live
           </button>
+
           <button
-            onClick={() => { enterReplay(); navigate('/replay'); }}
-            className="text-[9px] tracking-widest uppercase px-2 sm:px-3 py-1.5 transition-all font-bold"
+            onClick={() => {
+              enterReplay();
+              navigate('/replay');
+            }}
+            className="text-[9px] tracking-[0.15em] uppercase px-3 py-1.5 font-bold transition-all"
             style={{
-              background: isReplay ? T.text.primary : 'transparent',
-              color: isReplay ? T.bg.card : T.text.muted,
+              background: isReplay ? T.bg.card : 'transparent',
+              color: isReplay ? T.text.primary : T.text.muted,
               fontFamily: T.font.mono,
+              boxShadow: isReplay
+                ? '0 1px 2px rgba(0,0,0,0.12)'
+                : 'none',
             }}
           >
-            REPLAY
+            Replay
           </button>
         </div>
 
-        {/* Connection dot */}
-        <div className="flex items-center gap-2">
-          <span
-            className="inline-block w-[6px] h-[6px] rounded-full"
-            style={{ background: connected ? T.text.primary : T.border.subtle, animation: connected ? 'pulse-dot 2s infinite' : 'none' }}
-          />
-          <span
-            className="hidden sm:inline text-[10px] tracking-widest uppercase"
-            style={{ color: connected ? T.text.secondary : T.text.micro }}
-          >
-            {connected ? 'LIVE' : 'MOCK'}
-          </span>
-        </div>
+        {/* ─────────────────────────────────────────────────────────
+            THEME TOGGLE
+            Replaces the old connection dot.
+        ───────────────────────────────────────────────────────── */}
+        <button
+          onClick={toggleTheme}
+          title={
+            theme === 'dark'
+              ? 'Switch to light theme'
+              : 'Switch to dark theme'
+          }
+          aria-label={
+            theme === 'dark'
+              ? 'Switch to light theme'
+              : 'Switch to dark theme'
+          }
+          className="group flex items-center justify-center w-7 h-7 transition-all"
+          style={{
+            background: 'transparent',
+            color: T.text.secondary,
+            border: `1px solid ${T.border.subtle}`,
+            cursor: 'pointer',
+          }}
+        >
+          {theme === 'dark' ? (
+            /* SUN */
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2.2" />
+              <path d="M12 19.8V22" />
+              <path d="m4.93 4.93 1.55 1.55" />
+              <path d="m17.52 17.52 1.55 1.55" />
+              <path d="M2 12h2.2" />
+              <path d="M19.8 12H22" />
+              <path d="m4.93 19.07 1.55-1.55" />
+              <path d="m17.52 6.48 1.55-1.55" />
+            </svg>
+          ) : (
+            /* MOON */
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.7 6.7 0 0 0 9.8 9.8Z" />
+            </svg>
+          )}
+        </button>
 
-        <span className="hidden lg:inline text-[10px] tracking-widest" style={{ color: T.text.micro }}>
-          DELHI NODE
+        {/* ─────────────────────────────────────────────────────────
+            DELHI NODE
+        ───────────────────────────────────────────────────────── */}
+        <span
+          className="hidden lg:inline text-[9px] tracking-[0.15em] uppercase pl-4"
+          style={{
+            color: T.text.micro,
+            borderLeft: `1px solid ${T.border.subtle}`,
+          }}
+        >
+          Delhi Node
         </span>
       </div>
 
-      <style>{`@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
+      <style>{`
+        @keyframes gn-pulse-dot {
+          0%, 100% { opacity: 1; }
+          50%      { opacity: 0.35; }
+        }
+      `}</style>
     </header>
   );
 }

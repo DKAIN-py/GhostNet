@@ -11,9 +11,38 @@ function t(hoursOffset) {
   return new Date(BASE.getTime() + hoursOffset * 3600 * 1000).toISOString();
 }
 
+// Fixed sector for this whole historical narrative — reusing a known-valid
+// sector from the live mesh (DEL_EAST_LN / Laxmi Nagar, East Delhi) so the
+// replay reads as "this really happened, here" rather than a placeholder.
+export const REPLAY_SECTOR_ID = 'DEL_EAST_LN';
+export const REPLAY_SECTOR_NAME = 'Laxmi Nagar';
+export const REPLAY_DISTRICT = 'East Delhi';
+
+// FIX: previously sig() didn't set sectorId/district at all, so every place
+// that displayed them (Replay.jsx's header, every ReplayAgentCard's sector
+// line) rendered "undefined · undefined".
 function sig(agentId, domain, healthScore, anomalyLevel, signal, hoursOffset) {
-  return { agentId, domain, healthScore, anomalyLevel, signal, timestamp: t(hoursOffset) };
+  return {
+    agentId,
+    domain,
+    healthScore,
+    anomalyLevel,
+    signal,
+    sectorId: REPLAY_SECTOR_ID,
+    district: REPLAY_DISTRICT,
+    timestamp: t(hoursOffset),
+  };
 }
+
+// Local display metadata for this replay's 3 signal streams — the live
+// AGENT_META (from lib/schema.js) doesn't know these ids, so without this
+// the cards would just show the raw "air_quality" / "transport" / "sentiment"
+// strings instead of a proper label.
+export const REPLAY_AGENT_META = {
+  air_quality: { label: 'Air Quality', domain: 'environment' },
+  transport:   { label: 'Transport & Congestion', domain: 'transit' },
+  sentiment:   { label: 'Public Sentiment', domain: 'civic' },
+};
 
 // ── 72 signals over 3 days — gradual deterioration ────────
 export const DELHI_NOV_2023 = [
@@ -108,14 +137,30 @@ export const DELHI_NOV_2023 = [
   sig('sentiment',   'social',     60, 'moderate', 'Post-crisis analysis trending',             64),
 ];
 
-// The cascade that fires at hour 16 (41h before peak at hour 34+some)
+// FIX: field names now match the live cascade schema exactly
+// (triggeredAgents / recommendations, not agentsTriggered / recommendation)
+// — the old names silently broke the TRIGGERED badge and the recommendation
+// preview since nothing actually read those field names. Also added the
+// primarySectorId/Name/district/cascadeScore/spatialSpread fields so this
+// object has full parity with a live sector cascade and can reuse the same
+// card styling.
 export const REPLAY_CASCADE = {
-  confidence:      91,
-  predictedEvent:  'Severe smog emergency — hazardous AQI',
-  hoursUntil:      41,
-  recommendation:  'Issue smog emergency advisory. Activate odd-even. Close schools.',
-  agentsTriggered: ['air_quality', 'transport', 'sentiment'],
-  timestamp:       new Date('2023-11-01T16:30:00.000Z').toISOString(),
+  alertId: 'ALT_REPLAY_NOV2023',
+  primarySectorId: REPLAY_SECTOR_ID,
+  primarySectorName: REPLAY_SECTOR_NAME,
+  district: REPLAY_DISTRICT,
+  cascadeScore: 0.91,
+  confidence: 91,
+  predictedEvent: 'Severe smog emergency — hazardous AQI',
+  hoursUntil: 41,
+  spatialSpread: [],
+  triggeredAgents: ['air_quality', 'transport', 'sentiment'],
+  recommendations: [
+    'Issue citywide smog emergency advisory.',
+    'Activate odd-even vehicle rationing.',
+    'Close schools and suspend outdoor activity.',
+  ],
+  timestamp: new Date('2023-11-01T16:30:00.000Z').toISOString(),
 };
 
 // Index in DELHI_NOV_2023 where cascade should fire
