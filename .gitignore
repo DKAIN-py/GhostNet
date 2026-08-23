@@ -1,18 +1,25 @@
-.env 
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
 
+# Virtual environments
 .venv
 
-__pycache__
+.env
 
-.vscode
+# python testing
+unistat.py
+test.py
 
-*.db
-*.db-shm
-*.db-wal
+# internal doc
+context.md
+*.html
 
+# mock backend
 *.js
-
-node_modules/
 *.json
-
-local_roberta
+node_modules
