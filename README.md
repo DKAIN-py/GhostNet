@@ -1,164 +1,249 @@
-# AutoNet Delhi
-> Real-time urban resilience intelligence for Delhi: a multi-agent monitoring mesh that fuses live infrastructure telemetry, local LLM cascade reasoning, and event-driven signal propagation across critical sectors.
+# Ghostnet: Autonomous Multi-Agent Civic Cascading Failure Detector
 
----
+Ghostnet is a high-performance, decentralized event-driven multi-agent framework designed to detect, cross-correlate, and predict civic and environmental cascading crises in real-time. By monitoring live open government transit telemetry, hyper-local air quality index streams, and urban public sentiment channels, Ghostnet calculates systemic risk indices to forecast multi-domain infrastructure failures before they manifest.
 
-## 🛠️ System Architecture & Key Components
+## The Real-World Application
 
-`AutoNet Delhi` is a Python-first, event-driven monitoring and decision-support system designed around sector-level autonomous agents and a central cascade engine. The project uses a `FastAPI` application in `main.py` as the master orchestrator, a single shared `socketio.AsyncClient` for all agent traffic, and a local Qwen 2.5 model served through `llama-server` to evaluate cascade risk from aggregated sector health signals.
+In modern mega-cities like Delhi, critical infrastructure systems do not fail in isolation; they trigger cascading degradation chains. For example:
 
-### Core execution model
+  The Catalyst: Air Quality indices spike to hazardous levels due to meteorological or industrial shifts.
 
-- `main.py` defines the application lifecycle through `master_lifespan()`, which:
-  1. starts the local Qwen 2.5 brain via `qwen2.5run.sh`,
-  2. connects the shared Socket.IO client to `SOCKET_URL`,
-  3. instantiates the central in-memory telemetry store, and
-  4. boots every configured sector agent.
-- Each agent conforms to the abstract contract in `Agents/BaseAgent.py` and runs in its own asynchronous loop with a per-domain offset and per-sector jitter to stagger telemetry bursts.
-- Every agent writes its latest state to `SectorStateStore` and emits a normalized JSON payload over the `agent-signal` event when its Socket.IO connection is active.
-- The `CascadeEngine` in `Cascade_Engine/cascade_engine.py` periodically examines the store, invokes the Qwen model with structured prompts, and emits `cascade-alert`, `cascade-clear`, and `city-cascade` events to the backend.
+  The Secondary Fracture: Severe regional smog drops visual boundaries, grinding the state road transit infrastructure (GTFS-RT) to a bottleneck gridlock.
 
-### Primary components
+  The Civic Cascade: Public sentiment channels experience severe negativity spikes as citizens report breathing difficulties and commuting delays online.
 
-- `main.py`
-  - Master FastAPI app and lifecycle manager.
-  - Exposes `/health`, `/api/sectors/store`, and `/api/cascade/trigger-now` endpoints.
-  - Manages agent bootstrapping, teardown, and brain lifecycle.
+## Real-World Deployment Value
 
-- `config/sector_config.py`
-  - Defines the `SectorConfig` Pydantic schema that captures spatial, infrastructure, and domain metadata such as `sector_id`, `lat`, `lng`, `primary_corridor_name`, `rated_substation_capacity_mw`, and emergency/healthcare baselines.
+  Early Warning Window: Ghostnet identifies cross-correlation patterns and sounds systemic crisis alarms up to 36 hours before regional governments typically declare emergency physical school suspensions or commercial border lockdowns.
 
-- `config/sector_registry.py`
-  - Loads the Delhi sector registry used to instantiate real-world monitoring contexts across the city.
-  - Organizes sector metadata for districts, anchor sectors, drainage systems, metro resources, underpasses, hospitals, and civic chokepoints.
+  Smart Resource Allocation: Enables traffic municipal systems and public health infrastructures to automatically deploy emergency transit routes, dispatch mask distributions, and implement heavy-vehicle border limits dynamically based on live agent telemetry.
 
-- `Agents/`
-  - Contains the sector-aware micro-agents for environment, transit, and civic infrastructure monitoring.
-  - Each domain folder follows the same pattern: `agent.py` for runtime orchestration, `[domain]_model.py` for calculations, and `[domain]_api_fetcher.py` for external or synthetic data collection.
-  - Concrete agents include `GenericSmogAgent`, `GenericWaterloggingAgent`, `GenericThermalAgent`, `GenericTransitAgent`, `GenericRoadCorridorAgent`, `GenericPowerGridAgent`, `GenericIndustrialHazardAgent`, `GenericHospitalCapacityAgent`, `GenericEmergencyDispatchAgent`, `GenericSocialPanicAgent`, `GenericMuncipalAdvisoryAgent`, and `GenericMetroTransitAgent`.
 
-- `Cascade_Engine/sector_state_store.py`
-  - Provides `SectorRecord` and `SectorStateStore`, the central in-memory telemetry buffer.
-  - Keeps a ring buffer of recent sector snapshots and enforces a "worst health score wins" policy when multiple domains report different conditions for the same sector.
+## Architecture
 
-- `Cascade_Engine/cascade_engine.py`
-  - Implements `CascadeEngine`, a standalone loop that runs on an evaluation cadence and can trigger immediate evaluations.
-  - Uses `QwenLLMClient` to send OpenAI-compatible requests to `http://localhost:8080/v1/chat/completions` with structured JSON responses.
-  - Produces sector-level forecast alerts and aggregated citywide rollups.
-
-- `mock_backend.js`
-  - Lightweight Node.js + Socket.IO receiver used as the event sink for live telemetry and cascade events.
-  - Listens for `agent-signal`, `cascade-alert`, `cascade-clear`, and `city-cascade` payloads.
-
-- `qwen2.5run.sh`
-  - Bash script that starts and stops the local `llama-server` instance loaded with the Qwen 2.5 Coder 7B model.
-  - Runs the model on port `8080` and writes logs to the local model directory.
-
-### Data flow and design patterns
-
-1. `global_config.py` reads runtime configuration from environment variables and `.env` values, including `POLL_INTERVAL_SEC`, `SOCKET_URL`, `WAQI_TOKEN`, `TOMTOM_API_KEY`, and `DELHI_TRANSIT_API_KEY`.
-2. `master_lifespan()` starts the local model and opens the persistent Socket.IO client.
-3. Agent constructors receive the same `sio` client, store, and `SectorConfig` instance for each sector.
-4. Each domain agent does a fetch/compute/store/emit cycle:
-   - fetch telemetry from a source such as AQI, GTFS-RT, TomTom traffic, or synthetic fallback data,
-   - compute a model-based health score and anomaly level,
-   - persist the record in `SectorStateStore`,
-   - emit a standardized event payload to the backend.
-5. The `CascadeEngine` reads the store and asks the local LLM for structured sector and city risk synthesis.
-6. Results are emitted back over Socket.IO for downstream dashboards, console logging, or incident triage.
-
-### Technology stack
-
-- Python 3.11+
-- `FastAPI` for the master service and health endpoints
-- `python-socketio` + `aiohttp` for the shared async WebSocket client
-- `httpx` for HTTP calls to live APIs and the local OpenAI-compatible LLM endpoint
-- `pydantic` for `SectorConfig` validation and structured LLM response models
-- `pandas`, `openpyxl`, `BeautifulSoup`, and `gtfs-kit` for data ingestion and geospatial transport workflows
-- `torch` and `transformers` for model-backed AI processing
-- Node.js + `socket.io` for the mock receiver backend
-- Local `llama-server` with a Qwen 2.5 model for structured cascade scoring and city rollups
-
----
-
-## 📂 Directory Structure
-
-```text
-root/
-├── main.py                           # FastAPI master orchestrator; boots the brain, sockets, and all agents
-├── global_config.py                  # Reads environment variables such as `POLL_INTERVAL_SEC`, `SOCKET_URL`, and API keys
-├── qwen2.5run.sh                     # Starts/stops the local llama.cpp Qwen 2.5 brain on port 8080
-├── mock_backend.js                   # Node.js Socket.IO receiver for `agent-signal`, `cascade-alert`, and `city-cascade`
-├── pyproject.toml                    # Python project metadata and dependency list
-├── package.json                      # Node.js dependency metadata (`socket.io`)
-├── .env                              # Local environment configuration loaded with `python-dotenv`
-├── context.md                        # Project architecture notes and protocol references
-├── delhi_stations.csv                # WAQI station inventory used for Delhi-sector location metadata
-├── sdlc.html                         # HTML/offline design artifact for system life-cycle or architecture review
-├── test.py                           # Simple HTTP/HTML fetch smoke-check for downstream data sources
-├── unistat.py                        # Utility for collecting WAQI station data and writing Delhi station CSVs
-├── __init__.py                       # Package marker for the root project module
-├── Agents/                           # Domain-specific autonomous monitoring agents
-│   ├── BaseAgent.py                  # Abstract async contract used by every agent (`start`, `stop`, `_run_loop`, `step`)
-│   ├── Arterial_Congestion_agent/     # `GenericRoadCorridorAgent` + TomTom corridor congestion logic
-│   │   ├── agent.py
-│   │   ├── corridor_api_fetcher.py
-│   │   └── corridor_model.py
-│   ├── Emergency_Dispatch_agent/      # `GenericEmergencyDispatchAgent` for 112/emergency response monitoring
-│   │   ├── agent.py
-│   │   ├── dispatch_data_fetcher.py
-│   │   └── dispatch_model.py
-│   ├── Hospital_Capacity_agent/       # `GenericHospitalCapacityAgent` for ICU, bed, and casualty pressure
-│   │   ├── agent.py
-│   │   ├── hospital_api_fetcher.py
-│   │   └── capacity_model.py
-│   ├── Metero_Transit_agent/          # `GenericMetroTransitAgent` for metro congestion and interchange load
-│   │   ├── agent.py
-│   │   ├── metero_fetcher.py
-│   │   ├── metero_model.py
-│   │   └── data/
-│   │       └── view.ipynb
-│   ├── Muncipal_Advisory_agent/       # `GenericMuncipalAdvisoryAgent` for civic advisories and event closures
-│   │   ├── agent.py
-│   │   ├── advisory_data_fetcher.py
-│   │   └── advisory_model.py
-│   ├── Power_Grid_agent/              # `GenericPowerGridAgent` for grid capacity and load risk
-│   │   ├── agent.py
-│   │   ├── sdlc_api_fetcher.py
-│   │   └── grid_model.py
-│   ├── Smog_and_Dispersion_agent/     # `GenericSmogAgent` + AQI and plume behavior analytics
-│   │   ├── agent.py
-│   │   ├── api_fetcher.py
-│   │   └── plume_model.py
-│   ├── Social_Panic_Agent/            # `GenericSocialPanicAgent` for public sentiment and crowd risk cues
-│   │   ├── agent.py
-│   │   ├── social_data_fetcher.py
-│   │   └── panic_model.py
-│   ├── Structural_Industrial_Hazard_agent/  # `GenericIndustrialHazardAgent` for industrial risk and chemical hazards
-│   │   ├── agent.py
-│   │   ├── dfs_incident_fetcher.py
-│   │   └── hazard_model.py
-│   ├── Thermal_Stress_agent/          # `GenericThermalAgent` for UHI and heat-stress monitoring
-│   │   ├── agent.py
-│   │   ├── weather_api_fetcher.py
-│   │   └── thermal_model.py
-│   ├── Transit_Fleet_agent/           # `GenericTransitAgent` for public transport bottlenecks and fleet stationary ratios
-│   │   ├── agent.py
-│   │   ├── gtfs_fetcher.py
-│   │   └── mobility_model.py
-│   ├── Waterloggin_Hydrology_agent/   # `GenericWaterloggingAgent` for drainage overload and underpass flooding
-│   │   ├── agent.py
-│   │   ├── rain_api_fetcher.py
-│   │   └── hydrology_model.py
-│   └── __init__.py
-├── Cascade_Engine/                   # Cascade-level reasoning and coordinated citywide alerting
-│   ├── cascade_engine.py             # `CascadeEngine`, `QwenLLMClient`, and structured alert rollup orchestration
-│   ├── cascade_prompts.py            # Prompt templates for sector alerts and citywide synthesis
-│   ├── sector_state_store.py         # `SectorRecord` and `SectorStateStore` in-memory state management
-│   └── __pycache__                   # Python bytecode cache
-├── config/                           # Shared configuration and Delhi sector registry
-│   ├── __init__.py
-│   ├── sector_config.py              # `SectorConfig` schema for per-sector monitoring metadata
-│   └── sector_registry.py            # Delhi sector definitions used to bootstrap monitoring agents
-└── .gitignore                        # Repository ignore rules
 ```
+AutoNet (Python/FastAPI)          ghostnet-backend (Node.js)        Frontend (React/Vite)
+─────────────────────────         ──────────────────────────         ─────────────────────
+air_analysis agent          →     POST /signals                →     AgentCard
+transit_analysis agent      →     POST /signals                →     SignalFeed
+sentiment_analysis agent    →     POST /signals                →     Dashboard
+cascade_detector            →     POST /cascade-alert          →     CascadeBar / CascadeModal
+                                  GET  /system-state           ←     cascade_detector (polls)
+                                  Socket.io (agent-signal)     →     live feed
+                                  Socket.io (cascade-alert)    →     alert banner
+                                  Socket.io (cascade-clear)    →     clear banner
+```
+
+
+## Repos
+
+| Layer | Stack |
+|-------|-------|
+| Backend | Node.js, Express, Socket.io |
+| AI Agents | Python, FastAPI, httpx, uv |
+| Frontend | React, Vite, Socket.io-client |
+
+Backend branch: `backend` — `github.com/Tushar-bit01/GhostNet`
+
+
+## Backend
+
+### Setup
+
+```bash
+cd ghostnet-backend
+npm install
+cp .env.example .env   # fill in PORT
+node server.js
+```
+
+Runs on `http://localhost:3001` by default.
+
+### Routes
+
+#### Signals
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/signals` | Receive agent signal. Validates schema, rejects stale (>25h) timestamps. Emits `agent-signal` via Socket.io. |
+| `GET` | `/signals/latest` | Last signal per agent (`currentSystemState` map). |
+| `GET` | `/signals/history` | All signals from last 24h (max 1440). |
+
+Signal schema:
+```json
+{
+  "agentId": "air_quality",
+  "domain": "air-quality",
+  "healthScore": 72,
+  "anomalyLevel": "moderate",
+  "signal": "PM2.5 rising in Anand Vihar",
+  "timestamp": "2026-06-13T10:00:00Z"
+}
+```
+
+`anomalyLevel` values: `good` | `moderate` | `warning` | `critical`
+
+#### Cascade
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/cascade-alert` | Receive cascade from Python detector. 5s debounce guard. Emits `cascade-alert` via Socket.io. |
+| `POST` | `/cascade-clear` | Clear active cascade. Idempotent. Emits `cascade-clear`. |
+| `GET` | `/cascade-history` | Full audit trail of all past cascades. |
+| `GET` | `/test` | Re-emits last received cascade. Debug only — hit `/cascade-alert` first. |
+
+Cascade schema:
+```json
+{
+  "confidence": 74,
+  "predictedEvent": "Severe regional smog emergency",
+  "hoursUntil": 36,
+  "recommendation": "Issue immediate public health advisory",
+  "agentsTriggered": ["air_quality", "sentiment"],
+  "timestamp": "2026-06-13T10:00:00Z"
+}
+```
+
+#### System State
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/system-state` | Returns current state of all agents as array. Polled by cascade detector. |
+
+#### Replay
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/replay/dates` | Available replay dates. |
+| `GET` | `/replay/:date` | Signals for a given date, sorted by timestamp. |
+| `GET` | `/replay/:date/stream` | SSE stream — replays signals with real time delays. |
+
+### Socket.io Events
+
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `agent-signal` | Server → Client | Signal object |
+| `cascade-alert` | Server → Client | Cascade object |
+| `cascade-clear` | Server → Client | `{ clearedAt }` |
+| `agent-comms` | Server → Client | Inter-agent communication |
+
+### Storage
+
+All data is in-memory. No database. Resets on server restart.
+
+| Store key | Contents | Cap |
+|-----------|----------|-----|
+| `signals` | Raw signal array | 1440 entries / 24h window |
+| `currentSystemState` | Latest signal per agent | No cap (3 agents) |
+| `activeCascade` | Current active cascade | 1 (overwritten on new alert) |
+| `cascadeHistory` | All past cascades | No cap |
+| `replayData` | Seeded historical signals | Static |
+
+
+## Python Agents (AutoNet)
+
+### Setup
+
+```bash
+cd AutoNet/agents
+uv sync
+cp .env.example .env   # fill in API keys and NODE URLs
+uv run python main.py
+```
+
+### Agents
+
+**air_analysis** — Fetches AQI data from AQICN and government APIs. Computes `healthScore` and `anomalyLevel`. Posts to `/signals`.
+
+**transit_analysis** — Monitors Delhi metro and road transport. Posts to `/signals`.
+
+**sentiment_analysis** — Runs NLP pipeline on social data. Posts to `/signals`.
+
+**cascade_detector** — Polls `/system-state` every `EVALUATION_INTERVAL` seconds. Runs weighted risk matrix:
+
+| Agent | Weight |
+|-------|--------|
+| air_quality | 0.40 |
+| transport | 0.35 |
+| sentiment | 0.25 |
+
+Fires `POST /cascade-alert` when cascade score ≥ 0.65. Confidence computed as `100 - mean(triggeredAgentHealthScores)`.
+
+### Config (`cascade_detector/config.py`)
+
+```
+NODE_CASCADE_ALERT_URL   — POST target for alerts
+NODE_LATEST_STATE_URL    — GET source for system state
+EVALUATION_INTERVAL      — Poll interval in seconds
+```
+
+
+## Frontend
+
+### Setup
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # set VITE_BACKEND_URL=http://localhost:3001
+npm run dev
+```
+
+### Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | `/` | Live agent cards, signal feed, cascade banner |
+| Cascade Log | `/cascade-log` | History of all past cascades |
+| Nervous System | `/nervous-system` | System topology view |
+| Replay | `/replay` | Historical signal playback by date |
+
+### State
+
+All live state lives in `GhostnetContext`. Socket connection managed by `useSocket` hook.
+
+```
+GhostnetContext
+├── signals        — latest signal per agent
+├── feed           — last 50 signals (newest first)
+├── cascade        — active cascade or null
+├── cascadeHistory — all cascades this session
+└── connected      — socket connection status
+```
+
+
+## Environment Variables
+
+### Backend (`.env`)
+```
+PORT=3001
+```
+
+### Frontend (`.env`)
+```
+VITE_BACKEND_URL=http://localhost:3001
+```
+
+### Python (`.env`)
+```
+NODE_CASCADE_ALERT_URL=http://localhost:3001/cascade-alert
+NODE_LATEST_STATE_URL=http://localhost:3001/system-state
+EVALUATION_INTERVAL=60
+```
+
+
+## Team
+
+| Member | Owns |
+|--------|------|
+| Piyush | Node.js backend, Socket.io, in-memory store, replay engine |
+| Divyanshu | Python AI agents, cascade detector, NLP pipeline |
+| Tushar | React frontend, dashboard, Replay, Scoket.io |
+
+---
+
+## Notes
+
+- Backend has no persistence — all data resets on restart. This is intentional for the demo scope.
+- The `/test` endpoint re-emits the last cascade received via `/cascade-alert`. It will 404 if no real cascade has been received yet in the current session.
+- Cascade cooldown is 5 seconds — the detector will get a 429 if it fires too fast. This is a debounce, not a block.
