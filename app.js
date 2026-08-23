@@ -9,6 +9,7 @@ import { createTestRouter } from "./src/routes/testRoutes.js";
 import { createReplayRouter } from "./src/routes/replayRoutes.js";
 import { createMeshRouter } from "./src/routes/meshRoutes.js";
 import { createDemoRouter } from "./src/routes/demoRoutes.js";
+import { createChatRouter } from "./src/routes/chatRoutes.js";
 
 /**
  * CORS Origin Matcher:
@@ -60,6 +61,7 @@ export function createApp(io = null) {
   app.use(createReplayRouter());
   app.use(createMeshRouter());
   app.use(createDemoRouter(io));
+  app.use(createChatRouter());
 
   // Global 404 Handler
   app.use((req, res) => {
