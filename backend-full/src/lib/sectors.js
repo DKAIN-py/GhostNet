@@ -1,0 +1,46 @@
+﻿export const SECTORS = [
+  { sectorId: "DEL_EAST_LN", name: "Laxmi Nagar", district: "East Delhi", lat: 28.6304, lng: 77.2777, isLiveAnchor: true },
+  { sectorId: "DEL_EAST_PV", name: "Preet Vihar", district: "East Delhi", lat: 28.6415, lng: 77.2952, isLiveAnchor: true },
+  { sectorId: "DEL_EAST_MV", name: "Mayur Vihar", district: "East Delhi", lat: 28.6083, lng: 77.2967, isLiveAnchor: true },
+  { sectorId: "DEL_EAST_AV", name: "Anand Vihar", district: "East Delhi", lat: 28.6469, lng: 77.3164, isLiveAnchor: true },
+  { sectorId: "DEL_EAST_PP", name: "Patparganj", district: "East Delhi", lat: 28.6297, lng: 77.3026, isLiveAnchor: false },
+  { sectorId: "DEL_EAST_GANDHI", name: "Gandhi Nagar", district: "East Delhi", lat: 28.6582, lng: 77.2697, isLiveAnchor: false },
+  { sectorId: "DEL_NORTH_KGATE", name: "Kashmere Gate", district: "North Delhi", lat: 28.6669, lng: 77.2285, isLiveAnchor: true },
+  { sectorId: "DEL_NORTH_ISBT", name: "ISBT Kashmere Gate", district: "North Delhi", lat: 28.6692, lng: 77.2312, isLiveAnchor: true },
+  { sectorId: "DEL_NORTH_DU", name: "Delhi University", district: "North Delhi", lat: 28.6892, lng: 77.2104, isLiveAnchor: false },
+  { sectorId: "DEL_NEAST_SLP", name: "Seelampur", district: "North East Delhi", lat: 28.6698, lng: 77.2675, isLiveAnchor: true },
+  { sectorId: "DEL_NEAST_DG", name: "Dilshad Garden", district: "North East Delhi", lat: 28.6834, lng: 77.3204, isLiveAnchor: true },
+  { sectorId: "DEL_CENTRAL_DG", name: "Daryaganj", district: "Central Delhi", lat: 28.6433, lng: 77.2415, isLiveAnchor: true },
+  { sectorId: "DEL_CENTRAL_CP", name: "Connaught Place", district: "Central Delhi", lat: 28.6315, lng: 77.2167, isLiveAnchor: true },
+  { sectorId: "DEL_CENTRAL_KB", name: "Karol Bagh", district: "Central Delhi", lat: 28.6517, lng: 77.1906, isLiveAnchor: true },
+  { sectorId: "DEL_CENTRAL_PAHAR", name: "Paharganj", district: "Central Delhi", lat: 28.6448, lng: 77.2144, isLiveAnchor: false },
+  { sectorId: "DEL_OLD_CHANDNI", name: "Chandni Chowk", district: "Central Delhi", lat: 28.6506, lng: 77.2303, isLiveAnchor: true },
+  { sectorId: "DEL_OLD_SADAR", name: "Sadar Bazar", district: "Central Delhi", lat: 28.6562, lng: 77.2128, isLiveAnchor: false },
+  { sectorId: "DEL_WEST_TILAK", name: "Tilak Nagar", district: "West Delhi", lat: 28.6366, lng: 77.0963, isLiveAnchor: true },
+  { sectorId: "DEL_WEST_JANAK", name: "Janakpuri", district: "West Delhi", lat: 28.6219, lng: 77.0878, isLiveAnchor: true },
+  { sectorId: "DEL_WEST_PB", name: "Punjabi Bagh", district: "West Delhi", lat: 28.6689, lng: 77.1322, isLiveAnchor: true },
+  { sectorId: "DEL_WEST_RAJOURI", name: "Rajouri Garden", district: "West Delhi", lat: 28.6496, lng: 77.1232, isLiveAnchor: false },
+  { sectorId: "DEL_SEAST_NP", name: "Nehru Place", district: "South East Delhi", lat: 28.5492, lng: 77.2533, isLiveAnchor: true },
+  { sectorId: "DEL_SEAST_LAJPAT", name: "Lajpat Nagar", district: "South East Delhi", lat: 28.5700, lng: 77.2400, isLiveAnchor: true },
+  { sectorId: "DEL_SEAST_OKHLA", name: "Okhla Industrial", district: "South East Delhi", lat: 28.5300, lng: 77.2800, isLiveAnchor: true },
+  { sectorId: "DEL_SOUTH_SAKET", name: "Saket", district: "South Delhi", lat: 28.5244, lng: 77.2167, isLiveAnchor: true },
+  { sectorId: "DEL_SOUTH_HAUZ", name: "Hauz Khas", district: "South Delhi", lat: 28.5494, lng: 77.2001, isLiveAnchor: true },
+  { sectorId: "DEL_SOUTH_AIIMS", name: "AIIMS / Ansari Nagar", district: "South Delhi", lat: 28.5672, lng: 77.2100, isLiveAnchor: true },
+  { sectorId: "DEL_SOUTH_MALVIYA", name: "Malviya Nagar", district: "South Delhi", lat: 28.5325, lng: 77.2102, isLiveAnchor: false },
+  { sectorId: "DEL_SWEST_DWARKA", name: "Dwarka", district: "South West Delhi", lat: 28.5921, lng: 77.0460, isLiveAnchor: true },
+  { sectorId: "DEL_SWEST_PALAM", name: "Palam", district: "South West Delhi", lat: 28.5833, lng: 77.0833, isLiveAnchor: false },
+  { sectorId: "DEL_SWEST_VASANT", name: "Vasant Kunj", district: "South West Delhi", lat: 28.5200, lng: 77.1500, isLiveAnchor: false },
+  { sectorId: "DEL_NEW_LUTYENS", name: "Lutyens Delhi", district: "New Delhi", lat: 28.6143, lng: 77.2090, isLiveAnchor: true },
+  { sectorId: "DEL_NEW_CHANAKYA", name: "Chanakyapuri", district: "New Delhi", lat: 28.5983, lng: 77.1850, isLiveAnchor: false },
+  { sectorId: "DEL_NWEST_ROHINI", name: "Rohini", district: "North West Delhi", lat: 28.7495, lng: 77.0565, isLiveAnchor: true },
+  { sectorId: "DEL_NWEST_PITAM", name: "Pitampura", district: "North West Delhi", lat: 28.6990, lng: 77.1384, isLiveAnchor: false },
+  { sectorId: "DEL_ONORTH_BAWANA", name: "Bawana Industrial Area", district: "Outer North Delhi", lat: 28.7997, lng: 77.0326, isLiveAnchor: true },
+  { sectorId: "DEL_ONORTH_NARELA", name: "Narela Industrial Zone", district: "Outer North Delhi", lat: 28.8527, lng: 77.0935, isLiveAnchor: true },
+  { sectorId: "DEL_SHAH_VIVEK", name: "Vivek Vihar", district: "Shahdara", lat: 28.6710, lng: 77.3160, isLiveAnchor: false },
+  { sectorId: "DEL_SHAH_GTB", name: "GTB Enclave", district: "Shahdara", lat: 28.6860, lng: 77.3120, isLiveAnchor: false }
+];
+
+export const SECTOR_BY_ID = SECTORS.reduce((acc, s) => {
+  acc[s.sectorId] = s;
+  return acc;
+}, {});
